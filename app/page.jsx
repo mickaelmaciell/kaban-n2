@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 
 export default function Kanban() {
   const [tickets, setTickets] = useState([]);
@@ -9,6 +9,10 @@ export default function Kanban() {
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [expandedCards, setExpandedCards] = useState({});
   const [filtroAgora, setFiltroAgora] = useState(false);
+  
+  // Estados para Alertas
+  const [somAtivo, setSomAtivo] = useState(true);
+  const ticketsAnterioresRef = useRef([]);
 
   const tecnicosFixos = [
     'mickael.maciel@cardapioweb.com',
@@ -22,6 +26,24 @@ export default function Kanban() {
   const [tecnicosSelecionados, setTecnicosSelecionados] = useState([]);
   const [filtroSemTecnico, setFiltroSemTecnico] = useState(false);
 
+  // Carrega preferência de som do localStorage
+  useEffect(() => {
+    const salvo = localStorage.getItem('kanban_som_ativo');
+    if (salvo !== null) setSomAtivo(salvo === 'true');
+  }, []);
+
+  const toggleSom = () => {
+    const novoEstado = !somAtivo;
+    setSomAtivo(novoEstado);
+    localStorage.setItem('kanban_som_ativo', novoEstado);
+  };
+
+  const playNotification = () => {
+    if (!somAtivo) return;
+    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+    audio.play().catch(e => console.log("Navegador bloqueou áudio automático."));
+  };
+
   const load = useCallback(async (isSilent = false) => {
     if (!isSilent) setLoading(true);
     try {
@@ -29,10 +51,19 @@ export default function Kanban() {
       const res = await fetch(`/api/calendar?${query}`);
       const data = await res.json();
       if (!data.error) {
-        // Filtra para remover qualquer evento que contenha "Ocupado" no título
-        const dataFiltrada = data.filter(t => 
-          !t.summary.toLowerCase().includes('ocupado')
+        const dataFiltrada = data.filter(t => !t.summary.toLowerCase().includes('ocupado'));
+        
+        // Lógica de Alerta Sonoro: Verifica se há IDs novos na coluna "A FAZER"
+        const novosAFazer = dataFiltrada.filter(t => 
+          t.status === 'A FAZER' && 
+          !ticketsAnterioresRef.current.some(ant => ant.id === t.id)
         );
+
+        if (novosAFazer.length > 0 && isSilent) {
+          playNotification();
+        }
+
+        ticketsAnterioresRef.current = dataFiltrada;
         setTickets(dataFiltrada);
         setLastUpdate(new Date());
       }
@@ -40,7 +71,7 @@ export default function Kanban() {
       console.error("Erro ao atualizar:", error);
     }
     setLoading(false);
-  }, [view, dates]);
+  }, [view, dates, somAtivo]);
 
   useEffect(() => {
     load();
@@ -85,7 +116,6 @@ export default function Kanban() {
     );
   };
 
-  // --- LÓGICA DE FILTRAGEM ---
   const cardsSemAtribuicao = tickets.filter(t => t.attendees.length <= 1);
   
   let baseFiltrada = filtroSemTecnico 
@@ -98,26 +128,35 @@ export default function Kanban() {
     ? baseFiltrada.filter(t => new Date(t.start) >= new Date())
     : baseFiltrada;
 
-  // --- CONTAGEM DINÂMICA (Baseada no filtro "Agora") ---
   const contarPorTecnicoDinamico = (email) => {
-    let listaParaContar = filtroAgora 
-      ? tickets.filter(t => new Date(t.start) >= new Date()) 
-      : tickets;
+    let listaParaContar = filtroAgora ? tickets.filter(t => new Date(t.start) >= new Date()) : tickets;
     return listaParaContar.filter(t => t.attendees.some(a => a.email === email)).length;
   };
 
-  const totalSemTecnicoDinamico = (filtroAgora 
-    ? cardsSemAtribuicao.filter(t => new Date(t.start) >= new Date()) 
-    : cardsSemAtribuicao).length;
+  const totalSemTecnicoDinamico = (filtroAgora ? cardsSemAtribuicao.filter(t => new Date(t.start) >= new Date()) : cardsSemAtribuicao).length;
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans">
+      {/* Estilos das Animações */}
+      <style jsx global>{`
+        @keyframes pulse-red-border {
+          0% { border-color: #ef4444; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+          70% { border-color: #ef4444; box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+          100% { border-color: #ef4444; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .alerta-brilho { animation: pulse-red-border 2s infinite; border-width: 2px !important; }
+      `}</style>
+
       <header className="mb-6 flex flex-col gap-6 bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
         <div className="flex flex-col lg:flex-row justify-between items-center gap-4">
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-black text-slate-800 tracking-tighter uppercase">Painel Ativações</h1>
               <span className="flex items-center gap-1 text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold animate-pulse">● AO VIVO</span>
+              {/* Botão de Som */}
+              <button onClick={toggleSom} className={`ml-2 p-2 rounded-full transition-all ${somAtivo ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400'}`} title="Toggle Som">
+                {somAtivo ? '🔊' : '🔇'}
+              </button>
             </div>
             <div className="flex flex-col gap-1 mt-1">
                <p className="text-[11px] font-bold text-slate-500 uppercase">
@@ -198,15 +237,27 @@ export default function Kanban() {
                 {list.map(t => {
                   const isExpanded = expandedCards[t.id];
                   const dataEvento = new Date(t.start);
+                  const agora = new Date();
                   const semTecnico = t.attendees.length <= 1;
 
+                  // Lógica de Alertas Visuais
+                  const diffMinutes = (dataEvento - agora) / (1000 * 60);
+                  const horarioProximo = diffMinutes > 0 && diffMinutes <= 10;
+                  
+                  const criadoHaMaisDe5Min = (agora - new Date(t.created || lastUpdate)) > (5 * 60 * 1000); // Se não tiver data 'created', usa 'lastUpdate' como base
+                  const alertaSemTecnico = col === 'A FAZER' && semTecnico && criadoHaMaisDe5Min;
+
                   return (
-                    <div key={t.id} className={`bg-white p-4 rounded-2xl shadow-sm border transition-all ${semTecnico ? 'border-red-200 bg-red-50/20' : 'border-slate-200 hover:border-blue-400'}`}>
+                    <div key={t.id} className={`p-4 rounded-2xl shadow-sm border transition-all 
+                      ${alertaSemTecnico ? 'alerta-brilho bg-red-50' : 
+                        horarioProximo ? 'border-orange-400 bg-orange-50' : 
+                        semTecnico ? 'border-red-200 bg-red-50/20' : 'bg-white border-slate-200 hover:border-blue-400'}`}>
+                      
                       <div className="flex justify-between items-start mb-2">
                         <span className={`font-black text-[9px] px-1.5 py-0.5 rounded ${semTecnico ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500'}`}>#{t.id.substring(0,5)}</span>
                         <div className="text-right">
-                          <p className="text-[9px] font-black text-slate-800 uppercase tracking-tighter">📅 {dataEvento.toLocaleDateString('pt-BR')}</p>
-                          <p className="text-[9px] font-bold text-blue-500 uppercase tracking-tighter">⏰ {dataEvento.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</p>
+                          <p className={`text-[9px] font-black uppercase tracking-tighter ${horarioProximo ? 'text-orange-600' : 'text-slate-800'}`}>📅 {dataEvento.toLocaleDateString('pt-BR')}</p>
+                          <p className={`text-[9px] font-bold uppercase tracking-tighter ${horarioProximo ? 'text-orange-600 animate-pulse' : 'text-blue-500'}`}>⏰ {dataEvento.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</p>
                         </div>
                       </div>
 
