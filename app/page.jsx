@@ -29,7 +29,11 @@ export default function Kanban() {
       const res = await fetch(`/api/calendar?${query}`);
       const data = await res.json();
       if (!data.error) {
-        setTickets(data);
+        // Filtra para remover qualquer evento que contenha "Ocupado" no título
+        const dataFiltrada = data.filter(t => 
+          !t.summary.toLowerCase().includes('ocupado')
+        );
+        setTickets(dataFiltrada);
         setLastUpdate(new Date());
       }
     } catch (error) {
@@ -57,9 +61,9 @@ export default function Kanban() {
 
   const moveTicket = async (id, title, newStatus) => {
     let prefix = '';
-    if (newStatus === 'ATENDENDO') prefix = 'ATENDENDO - ';
+    if (newStatus === 'ATENDENDO') prefix = '⭐​ - ';
     if (newStatus === 'NOSHOW') prefix = '🚨 - ';
-    if (newStatus === 'FINALIZADO') prefix = 'OK - ';
+    if (newStatus === 'FINALIZADO') prefix = 'OK ​✅​ - ';
 
     await fetch('/api/calendar', {
       method: 'PATCH',
