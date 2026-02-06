@@ -285,7 +285,7 @@ export default function KanbanBoard() {
                 onClick={() => setIsModalOpen(true)}
                 className="px-4 py-2 rounded-xl text-[10px] font-900 border-2 bg-violet-600 text-white border-violet-700 hover:bg-violet-700 shadow-lg active:scale-95 transition-all flex items-center gap-2"
               >
-                ⚡ NOVO
+                ⚡ Encaixe
               </button>
 
               <Link href="/relatorios">
