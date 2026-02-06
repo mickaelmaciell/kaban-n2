@@ -5,8 +5,8 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata = {
-  title: "Meu Kanban Google",
-  description: "Gerenciador de tickets via Google Calendar",
+  title: "Kanban ativações",
+  description: "Gerenciador de ativações via Google Calendar",
 };
 
 export default function RootLayout({ children }) {

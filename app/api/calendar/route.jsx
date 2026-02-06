@@ -17,9 +17,12 @@ export async function GET(request) {
   let timeMin = new Date();
   let timeMax = new Date();
 
+  // AJUSTE DE FUSO HORÁRIO E PERÍODO COMPLETO
   if (start && end) {
     timeMin = new Date(start);
-    timeMax = new Date(new Date(end).setHours(23, 59, 59));
+    timeMax = new Date(end);
+    timeMax.setDate(timeMax.getDate() + 1);
+    timeMax.setUTCHours(4, 0, 0, 0); 
   } else {
     timeMin.setHours(0, 0, 0, 0);
     if (view === 'week') {
@@ -41,24 +44,25 @@ export async function GET(request) {
       timeMax: timeMax.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
+      maxResults: 2500,
+      // OTIMIZAÇÃO: Traz apenas os campos necessários, ignorando lixo eletrônico do Google
+      fields: 'items(id,summary,description,attendees,start,created)',
     });
 
     const tickets = (response.data.items || []).map(event => {
       const summary = event.summary || 'Sem Título';
-      let status = 'A FAZER';
+      let status = 'A FAZER'; 
       
-      // Lógica de identificação de colunas por prefixo
-      if (summary.toUpperCase().includes('ATENDENDO')) status = 'ATENDENDO';
-      else if (summary.includes('🚨') || summary.toUpperCase().includes('NOSHOW')) status = 'NOSHOW';
+      if (summary.includes('🚨') || summary.toUpperCase().includes('NOSHOW')) status = 'NOSHOW';
       else if (summary.toUpperCase().includes('OK') || summary.toUpperCase().includes('FINALIZADO')) status = 'FINALIZADO';
 
       return {
         id: event.id,
-        // Limpa os prefixos para mostrar apenas o nome limpo no card
-        summary: summary.replace(/ATENDENDO|NOSHOW|OK|FINALIZADO|🚨| - /gi, '').trim(),
+        summary: summary,
         description: event.description || '',
         attendees: event.attendees || [],
         start: event.start.dateTime || event.start.date,
+        created: event.created, 
         status: status
       };
     });

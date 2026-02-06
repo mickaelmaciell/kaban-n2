@@ -1,5 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Link from 'next/link'; 
+import CustomCalendar from './components/CustomCalendar'; 
 
 export default function Kanban() {
   const [tickets, setTickets] = useState([]);
@@ -11,7 +13,9 @@ export default function Kanban() {
   const [filtroAgora, setFiltroAgora] = useState(false);
   
   const [somAtivo, setSomAtivo] = useState(true);
-  const ticketsAnterioresRef = useRef([]);
+  
+  const ticketsAnterioresRef = useRef([]); 
+  const isFirstLoad = useRef(true);
 
   const tecnicosFixos = [
     'mickael.maciel@cardapioweb.com',
@@ -25,7 +29,6 @@ export default function Kanban() {
   const [tecnicosSelecionados, setTecnicosSelecionados] = useState([]);
   const [filtroSemTecnico, setFiltroSemTecnico] = useState(false);
 
-  // Formatação de Nome: mickael.maciel -> Mickael Maciel
   const formatarNome = (email) => {
     const nomeBase = email.split('@')[0];
     return nomeBase
@@ -48,7 +51,7 @@ export default function Kanban() {
   const playNotification = () => {
     if (!somAtivo) return;
     const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-    audio.play().catch(e => console.log("Áudio bloqueado."));
+    audio.play().catch(e => console.log("Áudio bloqueado pelo navegador. Interaja com a página."));
   };
 
   const load = useCallback(async (isSilent = false) => {
@@ -57,13 +60,24 @@ export default function Kanban() {
       const query = dates.start && dates.end ? `start=${dates.start}&end=${dates.end}` : `view=${view}`;
       const res = await fetch(`/api/calendar?${query}`);
       const data = await res.json();
+      
       if (!data.error) {
         const dataFiltrada = data.filter(t => !t.summary.toLowerCase().includes('ocupado'));
-        const novosAFazer = dataFiltrada.filter(t => 
-          t.status === 'A FAZER' && 
-          !ticketsAnterioresRef.current.some(ant => ant.id === t.id)
-        );
-        if (novosAFazer.length > 0 && isSilent) playNotification();
+        
+        if (!isFirstLoad.current) {
+          const novosPedidos = dataFiltrada.filter(t => {
+            const naoExistia = !ticketsAnterioresRef.current.some(ant => ant.id === t.id);
+            const statusEntrada = t.status === 'A FAZER';
+            return naoExistia && statusEntrada;
+          });
+
+          if (novosPedidos.length > 0) {
+            playNotification();
+          }
+        } else {
+          isFirstLoad.current = false;
+        }
+
         ticketsAnterioresRef.current = dataFiltrada;
         setTickets(dataFiltrada);
         setLastUpdate(new Date());
@@ -75,8 +89,8 @@ export default function Kanban() {
   }, [view, dates, somAtivo]);
 
   useEffect(() => {
-    load();
-    const interval = setInterval(() => load(true), 30000);
+    load(); 
+    const interval = setInterval(() => load(true), 10000); // 10s para não pesar
     return () => clearInterval(interval);
   }, [load]);
 
@@ -103,13 +117,15 @@ export default function Kanban() {
   };
 
   const moveTicket = async (id, title, newStatus) => {
+    const cleanTitle = title.replace(/ATENDENDO|NOSHOW|OK|FINALIZADO|🚨|✅| - /gi, '').trim();
+    
     let prefix = '';
-    if (newStatus === 'ATENDENDO') prefix = '⭐​ - ';
     if (newStatus === 'NOSHOW') prefix = '🚨 - ';
     if (newStatus === 'FINALIZADO') prefix = 'OK ​✅​ - ';
+    
     await fetch('/api/calendar', {
       method: 'PATCH',
-      body: JSON.stringify({ id, update: { summary: prefix + title } })
+      body: JSON.stringify({ id, update: { summary: prefix + cleanTitle } })
     });
     load(true);
   };
@@ -136,6 +152,8 @@ export default function Kanban() {
     return listaParaContar.filter(t => t.attendees.some(a => a.email === email)).length;
   };
 
+  const COLUNAS = ['SEM TECNICO', 'A FAZER', 'NOSHOW', 'FINALIZADO'];
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8">
       <style jsx global>{`
@@ -150,11 +168,12 @@ export default function Kanban() {
       `}</style>
 
       <header className="mb-6 flex flex-col gap-6 bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
-        <div className="flex flex-col lg:flex-row justify-between items-center gap-4">
-          <div>
+        <div className="flex flex-col xl:flex-row justify-between items-start gap-4">
+          
+          <div className="min-w-fit">
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-900 text-slate-800 tracking-tighter uppercase">Painel Ativações</h1>
-              <span className="flex items-center gap-1 text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold animate-pulse">● AO VIVO</span>
+              <span className="flex items-center gap-1 text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold animate-pulse">● EM TEMPO REAL</span>
               <button onClick={toggleSom} className={`ml-2 p-2 rounded-full transition-all ${somAtivo ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>
                 {somAtivo ? '🔊' : '🔇'}
               </button>
@@ -171,23 +190,39 @@ export default function Kanban() {
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 items-center">
-            <button onClick={() => setFiltroAgora(!filtroAgora)} className={`px-4 py-2 rounded-xl text-[10px] font-900 transition-all border-2 active:scale-95 ${filtroAgora ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50 hover:border-indigo-400'}`}>
-                {filtroAgora ? '⏱️ AGORA+' : '🕒 A PARTIR DE AGORA'}
-            </button>
-            <button onClick={() => { setFiltroSemTecnico(!filtroSemTecnico); setTecnicosSelecionados([]); }} className={`px-4 py-2 rounded-xl text-[10px] font-900 transition-all border-2 active:scale-95 ${filtroSemTecnico ? 'bg-red-600 text-white border-red-600 shadow-md' : 'bg-white text-red-600 border-red-200 hover:bg-red-50 hover:border-red-400'}`}>
-              SEM TÉCNICO ({tickets.filter(t => t.attendees.length <= 1).length})
-            </button>
-            <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-200 px-3">
-              <input type="date" className="bg-transparent text-[10px] font-900 outline-none cursor-pointer text-slate-900" onChange={e => setDates({...dates, start: e.target.value})} />
-              <span className="text-slate-400 text-xs font-900">➔</span>
-              <input type="date" className="bg-transparent text-[10px] font-900 outline-none cursor-pointer text-slate-900" onChange={e => setDates({...dates, end: e.target.value})} />
-            </div>
-            {['day', 'week', 'month'].map(v => (
-              <button key={v} onClick={() => {setView(v); setDates({start:'', end:''}); setFiltroAgora(false);}} className={`px-4 py-2 rounded-xl text-[10px] font-900 transition-all active:scale-95 ${view === v && !dates.start ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900'}`}>
-                {v === 'day' ? 'HOJE' : v === 'week' ? 'SEMANA' : 'MÊS'}
+          <div className="flex flex-col items-end gap-3 w-full xl:w-auto">
+            
+            <div className="flex flex-wrap items-center gap-3 justify-end">
+              
+              <CustomCalendar 
+                initialStartDate={dates.start}
+                initialEndDate={dates.end}
+                onChange={(start, end) => {
+                  setDates({ start, end });
+                  setView(''); 
+                  setFiltroAgora(false);
+                }} 
+              />
+
+              <button onClick={() => {setView('day'); setDates({start:'', end:''}); setFiltroAgora(false);}} className={`px-4 py-2 rounded-xl text-[10px] font-900 transition-all border-2 active:scale-95 ${view === 'day' && !dates.start ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+                HOJE
               </button>
-            ))}
+
+              <div className="h-6 w-px bg-slate-200 mx-1"></div>
+
+               <button onClick={() => setFiltroAgora(!filtroAgora)} className={`px-4 py-2 rounded-xl text-[10px] font-900 transition-all border-2 active:scale-95 ${filtroAgora ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50 hover:border-indigo-400'}`}>
+                  {filtroAgora ? '⏱️ AGORA+' : '🕒 A PARTIR DE AGORA'}
+              </button>
+              <button onClick={() => { setFiltroSemTecnico(!filtroSemTecnico); setTecnicosSelecionados([]); }} className={`px-4 py-2 rounded-xl text-[10px] font-900 transition-all border-2 active:scale-95 ${filtroSemTecnico ? 'bg-red-600 text-white border-red-600 shadow-md' : 'bg-white text-red-600 border-red-200 hover:bg-red-50 hover:border-red-400'}`}>
+                SOMENTE S/ TÉCNICO
+              </button>
+
+              <Link href="/relatorios">
+                <button className="px-4 py-2 rounded-xl text-[10px] font-900 border-2 bg-slate-800 text-white border-slate-950 hover:bg-slate-700 shadow-lg active:scale-95 transition-all flex items-center gap-2">
+                  📊 RELATÓRIOS
+                </button>
+              </Link>
+            </div>
           </div>
         </div>
 
@@ -207,11 +242,24 @@ export default function Kanban() {
         <div className="flex justify-center p-20 font-900 text-slate-400 animate-pulse text-sm uppercase tracking-widest">Sincronizando...</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {['A FAZER', 'ATENDENDO', 'NOSHOW', 'FINALIZADO'].map(col => {
-            const list = ticketsFiltrados.filter(t => t.status === col);
+          {COLUNAS.map(col => {
+            const list = ticketsFiltrados.filter(t => {
+                if (col === 'SEM TECNICO') {
+                    return t.status === 'A FAZER' && t.attendees.length <= 1;
+                }
+                if (col === 'A FAZER') {
+                    return t.status === 'A FAZER' && t.attendees.length > 1;
+                }
+                return t.status === col;
+            });
+
             return (
               <div key={col} className="flex flex-col gap-4">
-                <div className={`p-4 rounded-2xl text-white font-900 flex justify-between items-center shadow-md ${col === 'A FAZER' ? 'bg-red-500' : col === 'ATENDENDO' ? 'bg-green-600' : col === 'NOSHOW' ? 'bg-amber-500' : 'bg-slate-700'}`}>
+                <div className={`p-4 rounded-2xl text-white font-900 flex justify-between items-center shadow-md 
+                    ${col === 'SEM TECNICO' ? 'bg-red-500' : 
+                      col === 'A FAZER' ? 'bg-violet-600' : 
+                      col === 'NOSHOW' ? 'bg-amber-500' : 
+                      'bg-slate-700'}`}>
                   <span className="text-xs tracking-widest uppercase">{col}</span>
                   <span className="bg-black/20 px-2 py-0.5 rounded-lg text-[10px]">{list.length}</span>
                 </div>
@@ -222,7 +270,7 @@ export default function Kanban() {
                   const agora = new Date();
                   const semTecnico = t.attendees.length <= 1;
                   const horarioProximo = ((dataEvento - agora) / 60000) > 0 && ((dataEvento - agora) / 60000) <= 10;
-                  const alertaSemTecnico = col === 'A FAZER' && semTecnico && (agora - new Date(t.created || lastUpdate)) > (5 * 60 * 1000);
+                  const alertaSemTecnico = col === 'SEM TECNICO' && (agora - new Date(t.created || lastUpdate)) > (5 * 60 * 1000);
 
                   return (
                     <div 
@@ -290,16 +338,15 @@ export default function Kanban() {
                           </div>
 
                           <div className="flex gap-2 border-t border-slate-100 pt-4">
-                            {['ATENDENDO', 'NOSHOW', 'FINALIZADO'].filter(s => s !== t.status).map(s => (
+                            {['NOSHOW', 'FINALIZADO'].filter(s => s !== t.status).map(s => (
                               <button 
                                 key={s} 
                                 onClick={(e) => { e.stopPropagation(); moveTicket(t.id, t.summary, s); }} 
                                 className={`flex-1 py-2.5 rounded-xl text-[9px] font-900 transition-all uppercase border-b-4 active:border-b-0 active:translate-y-1 active:scale-95 shadow-sm
-                                  ${s === 'ATENDENDO' ? 'bg-green-600 text-white border-green-800 hover:bg-green-500' : 
-                                    s === 'NOSHOW' ? 'bg-amber-500 text-white border-amber-700 hover:bg-amber-400' : 
+                                  ${s === 'NOSHOW' ? 'bg-amber-500 text-white border-amber-700 hover:bg-amber-400' : 
                                     'bg-slate-800 text-white border-slate-950 hover:bg-slate-700'}`}
                               >
-                                {s === 'ATENDENDO' ? '⭐ ATENDER' : s === 'NOSHOW' ? '🚨 NO SHOW' : '✅ FINALIZAR'}
+                                {s === 'NOSHOW' ? '🚨 NO SHOW' : '✅ FINALIZAR'}
                               </button>
                             ))}
                           </div>
