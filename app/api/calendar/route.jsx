@@ -13,11 +13,11 @@ export async function GET(request) {
   const view = searchParams.get('view') || 'day';
   const start = searchParams.get('start');
   const end = searchParams.get('end');
+  const type = searchParams.get('type'); // <--- NOVO PARÂMETRO
 
   let timeMin = new Date();
   let timeMax = new Date();
 
-  // AJUSTE DE FUSO HORÁRIO E PERÍODO COMPLETO
   if (start && end) {
     timeMin = new Date(start);
     timeMax = new Date(end);
@@ -37,6 +37,12 @@ export async function GET(request) {
     timeMax.setHours(23, 59, 59);
   }
 
+  // LÓGICA DE PERFORMANCE
+  // Se for relatório, removemos 'description' que é muito pesado
+  const fields = type === 'report' 
+    ? 'items(id,summary,attendees,start,created)' 
+    : 'items(id,summary,description,attendees,start,created)';
+
   try {
     const response = await calendar.events.list({
       calendarId: process.env.CALENDAR_ID_ATIVACOES,
@@ -45,8 +51,7 @@ export async function GET(request) {
       singleEvents: true,
       orderBy: 'startTime',
       maxResults: 2500,
-      // OTIMIZAÇÃO: Traz apenas os campos necessários, ignorando lixo eletrônico do Google
-      fields: 'items(id,summary,description,attendees,start,created)',
+      fields: fields, // <--- CAMPO DINÂMICO
     });
 
     const tickets = (response.data.items || []).map(event => {
@@ -59,7 +64,8 @@ export async function GET(request) {
       return {
         id: event.id,
         summary: summary,
-        description: event.description || '',
+        // Se for relatório, description vem undefined (economiza memória e rede)
+        description: event.description || '', 
         attendees: event.attendees || [],
         start: event.start.dateTime || event.start.date,
         created: event.created, 
@@ -68,7 +74,10 @@ export async function GET(request) {
     });
 
     return NextResponse.json(tickets);
-  } catch (e) { return NextResponse.json({ error: e.message }, { status: 500 }); }
+  } catch (e) { 
+    console.error("Erro API Google:", e);
+    return NextResponse.json({ error: e.message }, { status: 500 }); 
+  }
 }
 
 export async function PATCH(request) {

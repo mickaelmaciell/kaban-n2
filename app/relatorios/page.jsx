@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
-  PieChart, Pie, Cell, LineChart, Line 
+  PieChart, Pie, Cell, LineChart, Line, ReferenceLine 
 } from 'recharts';
 import { ArrowLeft, Calendar, Users, Clock, AlertTriangle, CheckCircle, TrendingUp, Trophy } from 'lucide-react';
 import CustomCalendar from '../components/CustomCalendar'; 
@@ -13,12 +13,21 @@ export default function Relatorios() {
   const [loading, setLoading] = useState(true);
   const [ordenacaoRanking, setOrdenacaoRanking] = useState('eficiencia'); 
 
-  // DATA INICIAL: HOJE
-  const [dateRange, setDateRange] = useState(() => {
+  // Função auxiliar para pegar a data de hoje formatada
+  const getTodayRange = () => {
     const hoje = new Date();
-    const format = (d) => d.toLocaleDateString('en-CA'); 
+    const format = (d) => d.toLocaleDateString('en-CA'); // YYYY-MM-DD
     return { start: format(hoje), end: format(hoje) };
-  });
+  };
+
+  // DATA INICIAL: HOJE
+  const [dateRange, setDateRange] = useState(getTodayRange());
+
+  // VERIFICAÇÃO VISUAL: Se a data selecionada é HOJE
+  const isTodaySelected = useMemo(() => {
+    const today = getTodayRange();
+    return dateRange.start === today.start && dateRange.end === today.end;
+  }, [dateRange]);
 
   const tecnicosFixos = [
     'mickael.maciel', 'samara.patricio', 'thalysson.lucas', 
@@ -40,13 +49,17 @@ export default function Relatorios() {
     });
   }, []);
 
+  const handleResetToday = () => {
+    setDateRange(getTodayRange());
+  };
+
   useEffect(() => {
     const controller = new AbortController();
     
     const fetchData = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/calendar?start=${dateRange.start}&end=${dateRange.end}`, {
+        const res = await fetch(`/api/calendar?start=${dateRange.start}&end=${dateRange.end}&type=report`, {
           signal: controller.signal
         });
         const data = await res.json();
@@ -115,11 +128,14 @@ export default function Relatorios() {
     let listaTecnicos = Object.keys(porTecnico).map(tech => {
       const total = eficienciaTecnico[tech].total;
       const finalizados = eficienciaTecnico[tech].finalizado;
+      const noshow = eficienciaTecnico[tech].noshow;
       const calcEficiencia = total > 0 ? (finalizados / total) * 100 : 0;
 
       return {
         name: tech.split('.')[0].charAt(0).toUpperCase() + tech.split('.')[0].slice(1), 
         atendimentos: porTecnico[tech],
+        finalizados: finalizados, 
+        noshow: noshow,
         eficienciaRaw: calcEficiencia, 
         eficiencia: calcEficiencia.toFixed(1)
       };
@@ -142,6 +158,9 @@ export default function Relatorios() {
       agendamentos: demandaPorHora[key]
     })).sort((a,b) => parseInt(a.hora) - parseInt(b.hora));
 
+    const totalAgendamentosHoras = dataHoras.reduce((acc, curr) => acc + curr.agendamentos, 0);
+    const mediaPorHora = dataHoras.length > 0 ? (totalAgendamentosHoras / dataHoras.length).toFixed(1) : 0;
+
     const taxaNoShow = total > 0 ? ((porStatus['NOSHOW'] / total) * 100).toFixed(1) : 0;
     const taxaConclusao = total > 0 ? ((porStatus['FINALIZADO'] / total) * 100).toFixed(1) : 0;
 
@@ -151,6 +170,7 @@ export default function Relatorios() {
       dataTecnicos: listaTecnicos,
       dataDias,
       dataHoras,
+      mediaPorHora,
       taxaNoShow,
       taxaConclusao
     };
@@ -175,12 +195,25 @@ export default function Relatorios() {
           </div>
         </div>
 
+        {/* CONTAINER DO CALENDÁRIO + BOTÃO HOJE */}
         <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl">
           <CustomCalendar 
             initialStartDate={dateRange.start}
             initialEndDate={dateRange.end}
             onChange={handleDateChange} 
           />
+          
+          {/* BOTÃO HOJE COM ESTILO CONDICIONAL */}
+          <button 
+            onClick={handleResetToday}
+            className={`px-4 py-2 rounded-xl text-[10px] font-900 transition-all border-2 active:scale-95 shadow-sm
+              ${isTodaySelected 
+                ? 'bg-blue-600 text-white border-blue-600'  // Estilo ATIVO (Azul)
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'} // Estilo INATIVO
+            `}
+          >
+            HOJE
+          </button>
         </div>
       </header>
 
@@ -275,9 +308,11 @@ export default function Relatorios() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            {/* GRÁFICO DIAS DA SEMANA (NOME ALTERADO) */}
             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
               <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6 flex items-center gap-2">
-                <TrendingUp size={14}/> Sazonalidade Semanal
+                <TrendingUp size={14}/> Volume por Dia da Semana
               </h3>
               <div className="h-60">
                 <ResponsiveContainer width="100%" height="100%">
@@ -292,6 +327,7 @@ export default function Relatorios() {
               </div>
             </div>
 
+             {/* GRÁFICO HORÁRIOS (COM LINHA DE MÉDIA) */}
              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
               <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6 flex items-center gap-2">
                 <Clock size={14}/> Horários de Pico
@@ -303,6 +339,21 @@ export default function Relatorios() {
                     <XAxis dataKey="hora" tick={{fontSize: 10, fontWeight: 700, fill:'#94a3b8'}} axisLine={false} tickLine={false} />
                     <YAxis hide />
                     <Tooltip contentStyle={{borderRadius: '12px', border:'none'}} />
+                    
+                    {/* Linha de Referência da Média */}
+                    <ReferenceLine 
+                      y={metrics.mediaPorHora} 
+                      label={{ 
+                        value: `Média: ${metrics.mediaPorHora}`, 
+                        position: 'insideTopRight', 
+                        fill: '#94a3b8', 
+                        fontSize: 10, 
+                        fontWeight: 700 
+                      }} 
+                      stroke="#94a3b8" 
+                      strokeDasharray="3 3" 
+                    />
+                    
                     <Line type="monotone" dataKey="agendamentos" stroke="#ef4444" strokeWidth={3} dot={{r: 4, fill:'#ef4444'}} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -340,7 +391,9 @@ export default function Relatorios() {
                     <th className="pb-3 pl-2">Posição</th>
                     <th className="pb-3 pl-2">Técnico</th>
                     <th className="pb-3 text-center">Volume Total</th>
-                    <th className="pb-3 text-center">Taxa de Sucesso</th>
+                    <th className="pb-3 text-center text-green-600">✅ Finalizados</th>
+                    <th className="pb-3 text-center text-red-500">🚨 No-Show</th>
+                    <th className="pb-3 text-center">Eficiência</th>
                     <th className="pb-3 text-right pr-2">Destaque</th>
                   </tr>
                 </thead>
@@ -358,7 +411,12 @@ export default function Relatorios() {
                       <td className="py-3 pl-2 font-bold text-slate-700">{t.name}</td>
                       <td className="py-3 text-center font-bold text-slate-600">
                         {t.atendimentos}
-                        {ordenacaoRanking === 'volume' && i === 0 && <span className="ml-2 text-[9px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">Líder</span>}
+                      </td>
+                      <td className="py-3 text-center">
+                        <span className="text-green-700 font-bold bg-green-50 px-2 py-0.5 rounded-lg">{t.finalizados}</span>
+                      </td>
+                      <td className="py-3 text-center">
+                        <span className="text-red-700 font-bold bg-red-50 px-2 py-0.5 rounded-lg">{t.noshow}</span>
                       </td>
                       <td className="py-3 text-center">
                         <div className="flex items-center justify-center gap-2">
