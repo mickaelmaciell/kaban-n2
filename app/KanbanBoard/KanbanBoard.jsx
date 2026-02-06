@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import CustomCalendar from '../components/CustomCalendar'; 
+import AddTicketModal from '../components/AddTicketModal';
 
 export default function KanbanBoard() {
   const [tickets, setTickets] = useState([]);
@@ -12,6 +13,7 @@ export default function KanbanBoard() {
   const [expandedCards, setExpandedCards] = useState({});
   const [filtroAgora, setFiltroAgora] = useState(false);
   
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [somAtivo, setSomAtivo] = useState(true);
   
   const ticketsAnterioresRef = useRef([]); 
@@ -64,11 +66,6 @@ export default function KanbanBoard() {
       if (!data.error) {
         const dataFiltrada = data.filter(t => !t.summary.toLowerCase().includes('ocupado'));
         
-        // --- LÓGICA CORRIGIDA DO SOM ---
-        // O som só deve tocar se:
-        // 1. É uma atualização automática (isSilent = true)
-        // 2. Não é a primeira carga
-        // 3. Existem IDs novos que não existiam na lista anterior
         if (isSilent && !isFirstLoad.current) {
           const novosPedidos = dataFiltrada.filter(t => {
             const naoExistia = !ticketsAnterioresRef.current.some(ant => ant.id === t.id);
@@ -81,13 +78,9 @@ export default function KanbanBoard() {
           }
         } 
         
-        // Se NÃO for silencioso (mudança de data ou filtro), reseta o "primeira carga"
-        // para garantir que a próxima atualização silenciosa compare corretamente.
         if (!isSilent) {
-           // Atualizamos a ref imediatamente para evitar falso positivo na proxima batida
            ticketsAnterioresRef.current = dataFiltrada;
         } else {
-           // Se for silencioso, atualizamos a ref no final
            ticketsAnterioresRef.current = dataFiltrada;
         }
 
@@ -104,9 +97,28 @@ export default function KanbanBoard() {
 
   useEffect(() => {
     load(); 
-    const interval = setInterval(() => load(true), 10000); // 10 segundos
+    const interval = setInterval(() => load(true), 10000);
     return () => clearInterval(interval);
   }, [load]);
+
+  const handleCreateTicket = async (newTicketData) => {
+    try {
+      const res = await fetch('/api/calendar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newTicketData)
+      });
+      
+      if (res.ok) {
+        load(false); 
+      } else {
+        alert("Erro ao criar agendamento.");
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Erro de conexão.");
+    }
+  };
 
   const toggleExpand = (id) => {
     setExpandedCards(prev => ({ ...prev, [id]: !prev[id] }));
@@ -130,11 +142,9 @@ export default function KanbanBoard() {
     );
   };
 
-  // --- UI OTIMISTA: Atualiza a tela antes do servidor ---
   const moveTicket = async (id, title, newStatus) => {
-    const ticketsBackup = [...tickets]; // Backup caso falhe
+    const ticketsBackup = [...tickets];
 
-    // 1. Atualiza visualmente agora (Instantâneo)
     setTickets(current => current.map(t => {
       if (t.id === id) return { ...t, status: newStatus };
       return t;
@@ -150,17 +160,14 @@ export default function KanbanBoard() {
         method: 'PATCH',
         body: JSON.stringify({ id, update: { summary: prefix + cleanTitle } })
       });
-      // Sucesso: não precisa fazer nada, o load(true) do intervalo vai sincronizar depois
     } catch (error) {
       console.error("Erro ao mover card", error);
-      // Erro: Reverte a mudança visual
       setTickets(ticketsBackup);
       alert("Erro ao sincronizar. Verifique a conexão.");
     }
   };
 
   const updateAttendees = async (id, attendees, email, action = 'add') => {
-    // UI Otimista para participantes também
     const ticketsBackup = [...tickets];
     let updatedList = action === 'add' ? [...attendees, { email }] : attendees.filter(a => a.email !== email);
 
@@ -216,6 +223,13 @@ export default function KanbanBoard() {
         .alerta-brilho { animation: pulse-red-border 2s infinite; border-width: 2px !important; }
       `}</style>
 
+      <AddTicketModal 
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSave={handleCreateTicket}
+        tecnicos={tecnicosFixos}
+      />
+
       <header className="mb-6 flex flex-col gap-6 bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
         <div className="flex flex-col xl:flex-row justify-between items-start gap-4">
           
@@ -266,6 +280,14 @@ export default function KanbanBoard() {
                 SOMENTE S/ TÉCNICO
               </button>
 
+              {/* BOTÃO NOVO (AGORA ROXO) */}
+              <button 
+                onClick={() => setIsModalOpen(true)}
+                className="px-4 py-2 rounded-xl text-[10px] font-900 border-2 bg-violet-600 text-white border-violet-700 hover:bg-violet-700 shadow-lg active:scale-95 transition-all flex items-center gap-2"
+              >
+                ⚡ NOVO
+              </button>
+
               <Link href="/relatorios">
                 <button className="px-4 py-2 rounded-xl text-[10px] font-900 border-2 bg-slate-800 text-white border-slate-950 hover:bg-slate-700 shadow-lg active:scale-95 transition-all flex items-center gap-2">
                   📊 RELATÓRIOS
@@ -278,7 +300,6 @@ export default function KanbanBoard() {
         <div className="border-t border-slate-100 pt-4">
           <div className="flex items-center gap-3 mb-3">
             <p className="text-[9px] font-900 text-slate-500 uppercase flex items-center gap-2 tracking-widest">🔍 FILTRAR EQUIPE:</p>
-            {/* BOTÃO CORRIGIDO: AO LADO DO TÍTULO */}
             <button 
               onClick={toggleTodosTecnicos}
               className="text-[9px] font-bold text-blue-600 hover:text-blue-800 uppercase tracking-wider hover:underline"
@@ -297,6 +318,7 @@ export default function KanbanBoard() {
         </div>
       </header>
 
+      {/* ... (RESTO DO CÓDIGO DA GRID E CARDS MANTIDO IGUAL) ... */}
       {loading && !tickets.length ? (
         <div className="flex justify-center p-20 font-900 text-slate-400 animate-pulse text-sm uppercase tracking-widest">Sincronizando...</div>
       ) : (

@@ -3,9 +3,9 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
-  PieChart, Pie, Cell, LineChart, Line, ReferenceLine 
+  PieChart, Pie, Cell, LineChart, Line, ReferenceLine, Area, AreaChart 
 } from 'recharts';
-import { ArrowLeft, Calendar, Users, Clock, AlertTriangle, CheckCircle, TrendingUp, Trophy } from 'lucide-react';
+import { ArrowLeft, Calendar, Users, Clock, AlertTriangle, CheckCircle, TrendingUp, Trophy, Zap } from 'lucide-react';
 import CustomCalendar from '../components/CustomCalendar'; 
 
 export default function Relatorios() {
@@ -13,20 +13,18 @@ export default function Relatorios() {
   const [loading, setLoading] = useState(true);
   const [ordenacaoRanking, setOrdenacaoRanking] = useState('eficiencia'); 
 
-  // Função auxiliar para pegar a data de hoje formatada
-  const getTodayRange = () => {
-    const hoje = new Date();
-    const format = (d) => d.toLocaleDateString('en-CA'); // YYYY-MM-DD
-    return { start: format(hoje), end: format(hoje) };
-  };
-
   // DATA INICIAL: HOJE
-  const [dateRange, setDateRange] = useState(getTodayRange());
+  const [dateRange, setDateRange] = useState(() => {
+    const hoje = new Date();
+    const format = (d) => d.toLocaleDateString('en-CA'); 
+    return { start: format(hoje), end: format(hoje) };
+  });
 
-  // VERIFICAÇÃO VISUAL: Se a data selecionada é HOJE
   const isTodaySelected = useMemo(() => {
-    const today = getTodayRange();
-    return dateRange.start === today.start && dateRange.end === today.end;
+    const hoje = new Date();
+    const format = (d) => d.toLocaleDateString('en-CA');
+    const todayStr = format(hoje);
+    return dateRange.start === todayStr && dateRange.end === todayStr;
   }, [dateRange]);
 
   const tecnicosFixos = [
@@ -39,7 +37,8 @@ export default function Relatorios() {
     success: '#10b981', 
     warning: '#f59e0b', 
     danger: '#ef4444',  
-    neutral: '#94a3b8'  
+    neutral: '#94a3b8',
+    encaixe: '#3b82f6' // Azul
   };
 
   const handleDateChange = useCallback((start, end) => {
@@ -50,7 +49,9 @@ export default function Relatorios() {
   }, []);
 
   const handleResetToday = () => {
-    setDateRange(getTodayRange());
+    const hoje = new Date();
+    const format = (d) => d.toLocaleDateString('en-CA');
+    setDateRange({ start: format(hoje), end: format(hoje) });
   };
 
   useEffect(() => {
@@ -83,11 +84,17 @@ export default function Relatorios() {
     if (!tickets.length) return null;
 
     const total = tickets.length;
-    const porStatus = { 'A FAZER': 0, 'NOSHOW': 0, 'FINALIZADO': 0, 'SEM TECNICO': 0 };
+    const porStatus = { 'A FAZER': 0, 'NOSHOW': 0, 'FINALIZADO': 0, 'SEM TECNICO': 0, 'ENCAIXE': 0 };
     const porTecnico = {};
     const eficienciaTecnico = {};
+    
+    // Dados Gerais
     const demandaPorDia = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
-    const demandaPorHora = {};
+    const demandaPorHora = {}; 
+    
+    // Dados SÓ de Encaixes (Isolados)
+    const encaixesPorDia = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
+    const encaixesPorHora = {}; 
 
     tecnicosFixos.forEach(t => {
       porTecnico[t] = 0;
@@ -96,8 +103,15 @@ export default function Relatorios() {
 
     tickets.forEach(t => {
       let status = t.status;
-      if (status === 'A FAZER' && t.attendees.length <= 1) status = 'SEM TECNICO';
-      if (porStatus[status] !== undefined) porStatus[status]++;
+      // Filtra por palavra chave (flexível para "ENCAIXE DE ATIVAÇÃO" ou antigo "ATENDIMENTO")
+      const isEncaixe = t.summary.toUpperCase().includes('ENCAIXE'); 
+      
+      if (isEncaixe) {
+        porStatus['ENCAIXE']++;
+      } else {
+        if (status === 'A FAZER' && t.attendees.length <= 1) status = 'SEM TECNICO';
+        if (porStatus[status] !== undefined) porStatus[status]++;
+      }
 
       t.attendees.forEach(att => {
         const nomeEmail = att.email.split('@')[0];
@@ -114,8 +128,16 @@ export default function Relatorios() {
       const start = new Date(t.start);
       const diaSemana = start.getDay();
       const hora = start.getHours();
+      
+      // Contagem Geral
       demandaPorDia[diaSemana]++;
       demandaPorHora[hora] = (demandaPorHora[hora] || 0) + 1;
+      
+      // Contagem Exclusiva de Encaixes
+      if (isEncaixe) {
+        encaixesPorDia[diaSemana]++;
+        encaixesPorHora[hora] = (encaixesPorHora[hora] || 0) + 1;
+      }
     });
 
     const dataStatus = [
@@ -123,6 +145,7 @@ export default function Relatorios() {
       { name: 'No Show', value: porStatus['NOSHOW'], color: COLORS.danger },
       { name: 'A Fazer', value: porStatus['A FAZER'], color: COLORS.primary },
       { name: 'Sem Técnico', value: porStatus['SEM TECNICO'], color: COLORS.warning },
+      { name: 'Encaixes', value: porStatus['ENCAIXE'], color: COLORS.encaixe },
     ].filter(item => item.value > 0);
 
     let listaTecnicos = Object.keys(porTecnico).map(tech => {
@@ -148,14 +171,30 @@ export default function Relatorios() {
     }
 
     const diasSemanaNomes = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    
+    // Dados Gráfico Geral Dias
     const dataDias = Object.keys(demandaPorDia).map(key => ({
       dia: diasSemanaNomes[key],
       agendamentos: demandaPorDia[key]
     }));
 
+    // Dados Gráfico SÓ Encaixes Dias
+    const dataDiasEncaixe = Object.keys(encaixesPorDia).map(key => ({
+      dia: diasSemanaNomes[key],
+      encaixes: encaixesPorDia[key]
+    }));
+
+    // Dados Gráfico Horas (Geral + Linha Encaixe)
     const dataHoras = Object.keys(demandaPorHora).map(key => ({
       hora: `${key}h`,
-      agendamentos: demandaPorHora[key]
+      agendamentos: demandaPorHora[key],
+      encaixes: encaixesPorHora[key] || 0 // Usado no gráfico principal
+    })).sort((a,b) => parseInt(a.hora) - parseInt(b.hora));
+
+    // Dados Gráfico SÓ Encaixes Horas (Isolado)
+    const dataHorasEncaixe = Object.keys(encaixesPorHora).map(key => ({
+      hora: `${key}h`,
+      qtd: encaixesPorHora[key]
     })).sort((a,b) => parseInt(a.hora) - parseInt(b.hora));
 
     const totalAgendamentosHoras = dataHoras.reduce((acc, curr) => acc + curr.agendamentos, 0);
@@ -166,10 +205,13 @@ export default function Relatorios() {
 
     return {
       total,
+      totalEncaixes: porStatus['ENCAIXE'],
       dataStatus,
       dataTecnicos: listaTecnicos,
       dataDias,
+      dataDiasEncaixe, // Novo
       dataHoras,
+      dataHorasEncaixe, // Novo
       mediaPorHora,
       taxaNoShow,
       taxaConclusao
@@ -195,21 +237,18 @@ export default function Relatorios() {
           </div>
         </div>
 
-        {/* CONTAINER DO CALENDÁRIO + BOTÃO HOJE */}
         <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl">
           <CustomCalendar 
             initialStartDate={dateRange.start}
             initialEndDate={dateRange.end}
             onChange={handleDateChange} 
           />
-          
-          {/* BOTÃO HOJE COM ESTILO CONDICIONAL */}
           <button 
             onClick={handleResetToday}
             className={`px-4 py-2 rounded-xl text-[10px] font-900 transition-all border-2 active:scale-95 shadow-sm
               ${isTodaySelected 
-                ? 'bg-blue-600 text-white border-blue-600'  // Estilo ATIVO (Azul)
-                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'} // Estilo INATIVO
+                ? 'bg-blue-600 text-white border-blue-600' 
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}
             `}
           >
             HOJE
@@ -228,12 +267,20 @@ export default function Relatorios() {
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
           
           {/* CARDS DE KPI */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
               <div className="p-3 bg-violet-100 rounded-xl text-violet-600"><Calendar size={24} /></div>
               <div>
                 <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">Total Agendado</p>
                 <p className="text-2xl font-black text-slate-800">{metrics.total}</p>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
+              <div className="p-3 bg-blue-100 rounded-xl text-blue-600"><Zap size={24} /></div>
+              <div>
+                <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">Total Encaixes</p>
+                <p className="text-2xl font-black text-slate-800">{metrics.totalEncaixes}</p>
               </div>
             </div>
 
@@ -254,7 +301,7 @@ export default function Relatorios() {
             </div>
 
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
-              <div className="p-3 bg-blue-100 rounded-xl text-blue-600"><Users size={24} /></div>
+              <div className="p-3 bg-slate-100 rounded-xl text-slate-600"><Users size={24} /></div>
               <div>
                 <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">Equipe Ativa</p>
                 <p className="text-2xl font-black text-slate-800">{metrics.dataTecnicos.filter(t => t.atendimentos > 0).length}</p>
@@ -262,11 +309,55 @@ export default function Relatorios() {
             </div>
           </div>
 
-          {/* GRÁFICOS */}
+          {/* --- NOVA SEÇÃO: RAIO-X DOS ENCAIXES --- */}
+          {metrics.totalEncaixes > 0 && (
+            <div className="bg-blue-50/50 p-6 rounded-3xl shadow-sm border border-blue-100">
+              <h3 className="text-sm font-black uppercase text-blue-600 tracking-widest mb-6 flex items-center gap-2">
+                <Zap size={18}/> Raio-X dos Encaixes
+              </h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                {/* 1. Dias com mais Encaixes */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-blue-100/50">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-4">Volume por Dia</p>
+                  <div className="h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={metrics.dataDiasEncaixe}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="dia" tick={{fontSize: 10, fontWeight: 700, fill:'#94a3b8'}} axisLine={false} tickLine={false} />
+                        <YAxis hide />
+                        <Tooltip cursor={{fill: '#f0f9ff'}} contentStyle={{borderRadius: '12px', border:'none'}} />
+                        <Bar dataKey="encaixes" name="Encaixes" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={30} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* 2. Horários de Pico dos Encaixes */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-blue-100/50">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-4">Horários Críticos</p>
+                  <div className="h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={metrics.dataHorasEncaixe}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="hora" tick={{fontSize: 10, fontWeight: 700, fill:'#94a3b8'}} axisLine={false} tickLine={false} />
+                        <YAxis hide />
+                        <Tooltip contentStyle={{borderRadius: '12px', border:'none'}} />
+                        <Area type="monotone" dataKey="qtd" name="Encaixes" stroke="#3b82f6" fill="#eff6ff" strokeWidth={3} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* GRÁFICOS GERAIS */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-              <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6">Status em Tempo Real</h3>
+              <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6">Distribuição Geral</h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
@@ -292,7 +383,7 @@ export default function Relatorios() {
             </div>
 
             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 lg:col-span-2">
-              <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6">Volume Individual & Eficiência</h3>
+              <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6">Performance da Equipe</h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={metrics.dataTecnicos} layout="vertical" margin={{left: 20, right: 20}}>
@@ -307,12 +398,12 @@ export default function Relatorios() {
             </div>
           </div>
 
+          {/* GRÁFICOS TEMPORAIS (GERAL) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
-            {/* GRÁFICO DIAS DA SEMANA (NOME ALTERADO) */}
             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
               <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6 flex items-center gap-2">
-                <TrendingUp size={14}/> Volume por Dia da Semana
+                <TrendingUp size={14}/> Volume por Dia da Semana (Geral)
               </h3>
               <div className="h-60">
                 <ResponsiveContainer width="100%" height="100%">
@@ -327,10 +418,9 @@ export default function Relatorios() {
               </div>
             </div>
 
-             {/* GRÁFICO HORÁRIOS (COM LINHA DE MÉDIA) */}
              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
               <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6 flex items-center gap-2">
-                <Clock size={14}/> Horários de Pico
+                <Clock size={14}/> Horários de Pico (Geral)
               </h3>
               <div className="h-60">
                 <ResponsiveContainer width="100%" height="100%">
@@ -340,7 +430,6 @@ export default function Relatorios() {
                     <YAxis hide />
                     <Tooltip contentStyle={{borderRadius: '12px', border:'none'}} />
                     
-                    {/* Linha de Referência da Média */}
                     <ReferenceLine 
                       y={metrics.mediaPorHora} 
                       label={{ 
@@ -354,7 +443,8 @@ export default function Relatorios() {
                       strokeDasharray="3 3" 
                     />
                     
-                    <Line type="monotone" dataKey="agendamentos" stroke="#ef4444" strokeWidth={3} dot={{r: 4, fill:'#ef4444'}} />
+                    <Line type="monotone" dataKey="agendamentos" name="Total Geral" stroke="#ef4444" strokeWidth={3} dot={{r: 4, fill:'#ef4444'}} />
+                    <Line type="monotone" dataKey="encaixes" name="Encaixes" stroke="#3b82f6" strokeWidth={2} dot={{r: 3, fill:'#3b82f6'}} strokeDasharray="5 5" />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -409,9 +499,7 @@ export default function Relatorios() {
                         </span>
                       </td>
                       <td className="py-3 pl-2 font-bold text-slate-700">{t.name}</td>
-                      <td className="py-3 text-center font-bold text-slate-600">
-                        {t.atendimentos}
-                      </td>
+                      <td className="py-3 text-center font-bold text-slate-600">{t.atendimentos}</td>
                       <td className="py-3 text-center">
                         <span className="text-green-700 font-bold bg-green-50 px-2 py-0.5 rounded-lg">{t.finalizados}</span>
                       </td>
