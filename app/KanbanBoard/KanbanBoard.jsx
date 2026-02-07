@@ -200,7 +200,15 @@ export default function KanbanBoard() {
   };
 
   const cardsSemAtribuicao = tickets.filter(t => t.attendees.length <= 1);
-  let baseFiltrada = filtroSemTecnico ? cardsSemAtribuicao : tecnicosSelecionados.length === 0 ? tickets : tickets.filter(t => t.attendees.slice(1).some(a => tecnicosSelecionados.includes(a.email)));
+  
+  // --- CORREÇÃO AQUI ---
+  // Removido o .slice(1) que impedia de ver cards onde o técnico era o primeiro da lista
+  let baseFiltrada = filtroSemTecnico 
+    ? cardsSemAtribuicao 
+    : tecnicosSelecionados.length === 0 
+      ? tickets 
+      : tickets.filter(t => t.attendees.some(a => tecnicosSelecionados.includes(a.email))); // Antes: t.attendees.slice(1).some...
+
   const ticketsFiltrados = filtroAgora ? baseFiltrada.filter(t => new Date(t.start) >= new Date()) : baseFiltrada;
 
   const contarPorTecnicoDinamico = (email) => {
@@ -280,12 +288,11 @@ export default function KanbanBoard() {
                 SOMENTE S/ TÉCNICO
               </button>
 
-              {/* BOTÃO NOVO (AGORA ROXO) */}
               <button 
                 onClick={() => setIsModalOpen(true)}
                 className="px-4 py-2 rounded-xl text-[10px] font-900 border-2 bg-violet-600 text-white border-violet-700 hover:bg-violet-700 shadow-lg active:scale-95 transition-all flex items-center gap-2"
               >
-                ⚡ Encaixe
+                ⚡ NOVO
               </button>
 
               <Link href="/relatorios">
@@ -318,7 +325,6 @@ export default function KanbanBoard() {
         </div>
       </header>
 
-      {/* ... (RESTO DO CÓDIGO DA GRID E CARDS MANTIDO IGUAL) ... */}
       {loading && !tickets.length ? (
         <div className="flex justify-center p-20 font-900 text-slate-400 animate-pulse text-sm uppercase tracking-widest">Sincronizando...</div>
       ) : (
