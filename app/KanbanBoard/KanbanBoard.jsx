@@ -124,16 +124,27 @@ export default function KanbanBoard() {
     setExpandedCards(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
+  // --- FUNÇÃO CORRIGIDA PARA LIMPAR HTML ---
   const renderDescription = (text) => {
+    if (!text) return '';
+
+    // 1. Remove tags HTML básicas que o Google Agenda pode enviar (<br>, <b>, etc)
+    // Mantém apenas o texto puro e os links
+    let cleanText = text
+      .replace(/<br\s*\/?>/gi, '\n') // Troca <br> por quebra de linha
+      .replace(/<[^>]+>/g, '');      // Remove qualquer outra tag HTML (<a>, <div>, etc)
+
+    // 2. Detecta URLs no texto limpo e transforma em links clicáveis
     const urlRegex = /(https?:\/\/[^\s]+)/g;
-    return text.split(urlRegex).map((part, i) => 
+    
+    return cleanText.split(urlRegex).map((part, i) => 
       urlRegex.test(part) ? (
         <a 
           key={i} 
           href={part} 
           target="_blank" 
           rel="noreferrer" 
-          className="text-blue-600 underline break-all font-bold"
+          className="text-blue-600 underline break-all font-bold hover:text-blue-800"
           onClick={(e) => e.stopPropagation()}
         >
           {part}
@@ -201,13 +212,11 @@ export default function KanbanBoard() {
 
   const cardsSemAtribuicao = tickets.filter(t => t.attendees.length <= 1);
   
-  // --- CORREÇÃO AQUI ---
-  // Removido o .slice(1) que impedia de ver cards onde o técnico era o primeiro da lista
   let baseFiltrada = filtroSemTecnico 
     ? cardsSemAtribuicao 
     : tecnicosSelecionados.length === 0 
       ? tickets 
-      : tickets.filter(t => t.attendees.some(a => tecnicosSelecionados.includes(a.email))); // Antes: t.attendees.slice(1).some...
+      : tickets.filter(t => t.attendees.some(a => tecnicosSelecionados.includes(a.email)));
 
   const ticketsFiltrados = filtroAgora ? baseFiltrada.filter(t => new Date(t.start) >= new Date()) : baseFiltrada;
 
@@ -377,6 +386,7 @@ export default function KanbanBoard() {
 
                       {isExpanded && (
                         <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-300" onClick={(e) => e.stopPropagation()}>
+                          {/* AQUI ESTÁ A CORREÇÃO DE SEGURANÇA E LIMPEZA DE HTML */}
                           <div className="text-[11px] text-slate-700 mb-4 whitespace-pre-wrap border-l-4 border-blue-500 bg-slate-50 p-3 rounded-r-lg max-h-40 overflow-y-auto leading-relaxed font-600">
                             {renderDescription(t.description)}
                           </div>
