@@ -60,11 +60,27 @@ export default function Relatorios() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/calendar?start=${dateRange.start}&end=${dateRange.end}&type=report`, {
-          signal: controller.signal
+        // --- CORREÇÃO DE CACHE ---
+        // Adiciona timestamp para forçar dados novos sempre que abrir o relatório
+        const timestamp = new Date().getTime(); 
+        const res = await fetch(`/api/calendar?start=${dateRange.start}&end=${dateRange.end}&type=report&_t=${timestamp}`, {
+          signal: controller.signal,
+          cache: 'no-store', // Desativa cache do Next.js
+          headers: {
+            'Pragma': 'no-cache',
+            'Cache-Control': 'no-cache, no-store, must-revalidate'
+          }
         });
         const data = await res.json();
-        if (!data.error) setTickets(data.filter(t => !t.summary.toLowerCase().includes('ocupado')));
+        
+        // Filtro igual ao do Kanban para garantir consistência
+        if (!data.error) {
+          const dataFiltrada = data.filter(t => 
+            !t.summary.toLowerCase().includes('ocupado') && 
+            !t.summary.toLowerCase().includes('sem ativação')
+          );
+          setTickets(dataFiltrada);
+        }
       } catch (error) {
         if (error.name !== 'AbortError') {
           console.error("Erro ao carregar relatórios", error);
@@ -103,7 +119,6 @@ export default function Relatorios() {
 
     tickets.forEach(t => {
       let status = t.status;
-      // Filtra por palavra chave (flexível para "ENCAIXE DE ATIVAÇÃO" ou antigo "ATENDIMENTO")
       const isEncaixe = t.summary.toUpperCase().includes('ENCAIXE'); 
       
       if (isEncaixe) {
@@ -113,27 +128,35 @@ export default function Relatorios() {
         if (porStatus[status] !== undefined) porStatus[status]++;
       }
 
+      // --- CORREÇÃO DA CONTAGEM (Lógica do Kanban) ---
+      // Identifica técnicos únicos neste ticket para evitar contagem duplicada
+      const tecnicosUnicosNesteTicket = new Set();
+
       t.attendees.forEach(att => {
         const nomeEmail = att.email.split('@')[0];
+        // Verifica se o email faz parte da lista de técnicos fixos
         const techEncontrado = tecnicosFixos.find(fixo => nomeEmail.includes(fixo));
         
         if (techEncontrado) {
-          porTecnico[techEncontrado]++;
-          eficienciaTecnico[techEncontrado].total++;
-          if (t.status === 'FINALIZADO') eficienciaTecnico[techEncontrado].finalizado++;
-          if (t.status === 'NOSHOW') eficienciaTecnico[techEncontrado].noshow++;
+          tecnicosUnicosNesteTicket.add(techEncontrado);
         }
+      });
+
+      // Incrementa os contadores apenas uma vez por técnico por ticket
+      tecnicosUnicosNesteTicket.forEach(tech => {
+        porTecnico[tech]++;
+        eficienciaTecnico[tech].total++;
+        if (t.status === 'FINALIZADO') eficienciaTecnico[tech].finalizado++;
+        if (t.status === 'NOSHOW') eficienciaTecnico[tech].noshow++;
       });
 
       const start = new Date(t.start);
       const diaSemana = start.getDay();
       const hora = start.getHours();
       
-      // Contagem Geral
       demandaPorDia[diaSemana]++;
       demandaPorHora[hora] = (demandaPorHora[hora] || 0) + 1;
       
-      // Contagem Exclusiva de Encaixes
       if (isEncaixe) {
         encaixesPorDia[diaSemana]++;
         encaixesPorHora[hora] = (encaixesPorHora[hora] || 0) + 1;
