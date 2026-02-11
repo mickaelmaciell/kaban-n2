@@ -68,6 +68,7 @@ export default function KanbanBoard() {
         const dataFiltrada = data.filter(t =>
           !t.summary.toLowerCase().includes('ocupado') &&
           !t.summary.includes('🟣') &&
+          !t.summary.includes('[SUP]') &&
           !t.summary.toLowerCase().includes('sem ativação')
         );
 
