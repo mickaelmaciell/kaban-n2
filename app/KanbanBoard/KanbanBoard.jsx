@@ -52,7 +52,8 @@ export default function KanbanBoard() {
 
   const playNotification = () => {
     if (!somAtivo) return;
-    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+    // SOM ALTERADO AQUI PARA O NOVO (2870)
+    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2870/2870-preview.mp3');
     audio.play().catch(e => console.log("Áudio bloqueado pelo navegador."));
   };
 
@@ -390,7 +391,6 @@ export default function KanbanBoard() {
 
                       {isExpanded && (
                         <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-300" onClick={(e) => e.stopPropagation()}>
-                          {/* AQUI ESTÁ A CORREÇÃO DE SEGURANÇA E LIMPEZA DE HTML */}
                           <div className="text-[11px] text-slate-700 mb-4 whitespace-pre-wrap border-l-4 border-blue-500 bg-slate-50 p-3 rounded-r-lg max-h-40 overflow-y-auto leading-relaxed font-600">
                             {renderDescription(t.description)}
                           </div>
