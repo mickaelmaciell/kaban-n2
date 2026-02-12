@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import CustomCalendar from '../components/CustomCalendar';
 import AddTicketModal from '../components/AddTicketModal';
-import ConfigModal from '../components/ConfigModal'; // <--- IMPORTANTE: Importe o Modal Novo
+import ConfigModal from '../components/ConfigModal'; 
 
 export default function KanbanBoard() {
   const [tickets, setTickets] = useState([]);
@@ -16,21 +16,23 @@ export default function KanbanBoard() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   
-  // --- NOVOS ESTADOS PARA CONFIGURAÇÃO ---
-  const [isConfigOpen, setIsConfigOpen] = useState(false); // Abre/fecha a janelinha
-  const [tecnicosFixos, setTecnicosFixos] = useState([]); // Lista dinâmica de técnicos
-  const [palavrasIgnoradas, setPalavrasIgnoradas] = useState([]); // Lista dinâmica de filtros
-  // --------------------------------------
+  // --- CONFIGURAÇÕES GLOBAIS ---
+  const [isConfigOpen, setIsConfigOpen] = useState(false); 
+  const [tecnicosFixos, setTecnicosFixos] = useState([]); 
+  const [palavrasIgnoradas, setPalavrasIgnoradas] = useState([]); 
+  // -----------------------------
 
   const [somAtivo, setSomAtivo] = useState(true);
 
   const ticketsAnterioresRef = useRef([]);
+  // Ref para controlar quais cards já tocaram o alarme de 10 min (para não repetir)
+  const ticketsAlertadosRef = useRef(new Set()); 
   const isFirstLoad = useRef(true);
 
   const [tecnicosSelecionados, setTecnicosSelecionados] = useState([]);
   const [filtroSemTecnico, setFiltroSemTecnico] = useState(false);
 
-  // --- BUSCAR CONFIGURAÇÕES NO INÍCIO ---
+  // --- 1. CARREGAR CONFIGURAÇÕES ---
   useEffect(() => {
     fetch('/api/config')
       .then(res => res.json())
@@ -41,11 +43,9 @@ export default function KanbanBoard() {
       .catch(err => console.error("Erro ao carregar configs:", err));
   }, []);
 
-  // Atualiza a tela quando você salva o modal
   const handleUpdateConfig = (newConfig) => {
     setTecnicosFixos(newConfig.tecnicos);
     setPalavrasIgnoradas(newConfig.filtros);
-    // Força recarregar os dados para aplicar o filtro novo imediatamente
     load(false, newConfig.filtros); 
   };
 
@@ -68,18 +68,25 @@ export default function KanbanBoard() {
     localStorage.setItem('kanban_som_ativo', novoEstado);
   };
 
-  const playNotification = () => {
+  // --- FUNÇÕES DE ÁUDIO ---
+  const playNewTicketSound = () => {
     if (!somAtivo) return;
-    // SOM ALTERADO PARA O SOLICITADO
-    // Certifique-se de que o arquivo está em public/sounds/ ou ajuste o caminho
-    const audio = new Audio('/sounds/mixkit-software-interface-back-2575.wav'); 
+    // Som suave para NOVO ticket (ID 2575 - O que você pediu)
+    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2575/2575-preview.mp3'); 
     audio.play().catch(e => console.log("Áudio bloqueado pelo navegador."));
   };
 
+  const playAlertSound = () => {
+    if (!somAtivo) return;
+    // Som de ALERTA para atraso (Um som diferente, tipo 'System Alert')
+    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'); 
+    audio.play().catch(e => console.log("Áudio bloqueado pelo navegador."));
+  };
+
+  // --- 2. LÓGICA DE CARREGAMENTO E NOTIFICAÇÃO ---
   const load = useCallback(async (isSilent = false, filtrosAtuais = null) => {
     if (!isSilent) setLoading(true);
     
-    // Usa os filtros passados agora ou o que já está no estado
     const listaNegra = filtrosAtuais || palavrasIgnoradas;
 
     try {
@@ -88,24 +95,23 @@ export default function KanbanBoard() {
       const data = await res.json();
 
       if (!data.error) {
-        // --- FILTRO DINÂMICO USANDO VERCEL KV ---
+        // FILTRO DINÂMICO
         const dataFiltrada = data.filter(t => {
           const resumo = t.summary.toLowerCase();
-          
-          // Se a lista ainda não carregou (primeiro segundo), usa um fallback seguro
           if (listaNegra.length === 0) {
              return !resumo.includes('ocupado') && !resumo.includes('sem ativação');
           }
-
-          // Verifica se TEM alguma palavra proibida na lista
           const temPalavraProibida = listaNegra.some(palavra => resumo.includes(palavra.toLowerCase()));
-          
-          // Se tiver palavra proibida, remove (return false). Se não tiver, mantém (return true).
           return !temPalavraProibida;
         });
-        // ----------------------------------------
 
+        // LÓGICA DE SONS
         if (isSilent && !isFirstLoad.current) {
+          const agora = new Date();
+          let tocouNovo = false;
+          let tocouAlerta = false;
+
+          // 1. Verifica NOVOS pedidos (Som Suave)
           const novosPedidos = dataFiltrada.filter(t => {
             const naoExistia = !ticketsAnterioresRef.current.some(ant => ant.id === t.id);
             const statusEntrada = t.status === 'A FAZER';
@@ -113,8 +119,28 @@ export default function KanbanBoard() {
           });
 
           if (novosPedidos.length > 0) {
-            playNotification();
+            playNewTicketSound();
+            tocouNovo = true;
           }
+
+          // 2. Verifica ATRASO DE 10 MINUTOS (Som de Alerta)
+          dataFiltrada.forEach(t => {
+            // Regra: Sem técnico E Status "A Fazer"
+            if (t.attendees.length <= 1 && t.status === 'A FAZER') {
+              const dataCriacao = new Date(t.created);
+              const diffMinutos = (agora - dataCriacao) / 1000 / 60; // Diferença em minutos
+
+              // Se passou de 10 minutos E ainda não tocamos o alerta para ESSE ticket específico
+              if (diffMinutos >= 10 && !ticketsAlertadosRef.current.has(t.id)) {
+                if (!tocouNovo && !tocouAlerta) { // Evita sobrepor sons se já tocou o de novo
+                   playAlertSound();
+                   tocouAlerta = true;
+                }
+                // Marca esse ID como alertado para não tocar de novo no próximo refresh
+                ticketsAlertadosRef.current.add(t.id);
+              }
+            }
+          });
         }
 
         ticketsAnterioresRef.current = dataFiltrada;
@@ -127,13 +153,13 @@ export default function KanbanBoard() {
       console.error("Erro ao atualizar:", error);
     }
     setLoading(false);
-  }, [view, dates, somAtivo, palavrasIgnoradas]); // Adicionado dependência de palavrasIgnoradas
+  }, [view, dates, somAtivo, palavrasIgnoradas]); 
 
+  // ATUALIZAÇÃO AUTOMÁTICA (10 SEGUNDOS - Conforme solicitado)
   useEffect(() => {
-    // Só começa o loop se já tivermos carregado as configurações (para não piscar dados errados)
     if (palavrasIgnoradas.length > 0 || tecnicosFixos.length > 0) {
         load();
-        const interval = setInterval(() => load(true), 10000);
+        const interval = setInterval(() => load(true), 10000); 
         return () => clearInterval(interval);
     }
   }, [load, palavrasIgnoradas, tecnicosFixos]);
@@ -279,7 +305,6 @@ export default function KanbanBoard() {
         tecnicos={tecnicosFixos}
       />
 
-      {/* MODAL DE CONFIGURAÇÃO (ENGRENAGEM) */}
       <ConfigModal 
         isOpen={isConfigOpen} 
         onClose={() => setIsConfigOpen(false)} 
@@ -297,7 +322,6 @@ export default function KanbanBoard() {
                 {somAtivo ? '🔊' : '🔇'}
               </button>
               
-              {/* --- BOTÃO DE CONFIGURAÇÃO (NOVO) --- */}
               <button 
                 onClick={() => setIsConfigOpen(true)} 
                 className="ml-2 p-2 rounded-full bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-all" 
@@ -305,7 +329,6 @@ export default function KanbanBoard() {
               >
                 ⚙️
               </button>
-              {/* ---------------------------------- */}
 
             </div>
             <div className="flex flex-col gap-1 mt-1">
@@ -375,7 +398,6 @@ export default function KanbanBoard() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {/* AGORA A LISTA VEM DA API (ESTADO) E NÃO MAIS FIXA */}
             {tecnicosFixos.map(email => (
               <button key={email} onClick={() => toggleTecnico(email)} className={`px-3 py-1.5 rounded-full text-[10px] font-900 border-2 transition-all active:scale-95 ${tecnicosSelecionados.includes(email) ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-900 border-slate-200 hover:border-blue-500 hover:bg-blue-50'}`}>
                 {formatarNome(email)} ({contarPorTecnicoDinamico(email)})
