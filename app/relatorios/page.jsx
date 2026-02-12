@@ -35,7 +35,7 @@ export default function Relatorios() {
     warning: '#f59e0b', 
     danger: '#ef4444',  
     neutral: '#94a3b8',
-    encaixe: '#3b82f6'
+    encaixe: '#3b82f6' // Azul para Encaixes
   };
 
   const handleDateChange = useCallback((start, end) => {
@@ -98,7 +98,7 @@ export default function Relatorios() {
     return () => controller.abort();
   }, [dateRange]);
 
-  // 3. Processamento dos Dados (A Mágica da História + Ativos)
+  // 3. Processamento dos Dados (A Mágica da História + Ativos + Encaixes)
   const metrics = useMemo(() => {
     if (!tickets.length && tecnicosCadastrados.length === 0) return null;
 
@@ -109,7 +109,6 @@ export default function Relatorios() {
     const mapaPerformance = {};
 
     // A. Inicializa com os Técnicos CADASTRADOS (Ativos)
-    // Isso garante que eles apareçam na lista mesmo se tiverem 0 tickets no período
     tecnicosCadastrados.forEach(email => {
       mapaPerformance[email] = {
         email: email,
@@ -117,12 +116,14 @@ export default function Relatorios() {
         total: 0,
         finalizado: 0,
         noshow: 0,
-        ativo: true // Marcador visual opcional
+        ativo: true
       };
     });
 
     const demandaPorDia = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
     const demandaPorHora = {}; 
+    
+    // --- DADOS PARA ENCAIXES ---
     const encaixesPorDia = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
     const encaixesPorHora = {}; 
 
@@ -139,19 +140,15 @@ export default function Relatorios() {
       }
 
       // --- LÓGICA DE HISTÓRICO ---
-      // Identifica técnicos únicos neste ticket
       const tecnicosNesteTicket = new Set();
 
       t.attendees.forEach(att => {
-        // Filtra para pegar apenas emails da empresa (segurança básica)
         if (att.email && att.email.includes('@cardapioweb.com')) {
           tecnicosNesteTicket.add(att.email);
         }
       });
 
       tecnicosNesteTicket.forEach(email => {
-        // Se o técnico NÃO está no mapa (foi removido do cadastro), adiciona ele AGORA
-        // Isso preserva a história!
         if (!mapaPerformance[email]) {
           mapaPerformance[email] = {
             email: email,
@@ -163,7 +160,6 @@ export default function Relatorios() {
           };
         }
 
-        // Computa os dados
         mapaPerformance[email].total++;
         if (t.status === 'FINALIZADO') mapaPerformance[email].finalizado++;
         if (t.status === 'NOSHOW') mapaPerformance[email].noshow++;
@@ -177,6 +173,7 @@ export default function Relatorios() {
       demandaPorDia[diaSemana]++;
       demandaPorHora[hora] = (demandaPorHora[hora] || 0) + 1;
       
+      // Contagem Específica de Encaixes
       if (isEncaixe) {
         encaixesPorDia[diaSemana]++;
         encaixesPorHora[hora] = (encaixesPorHora[hora] || 0) + 1;
@@ -191,7 +188,6 @@ export default function Relatorios() {
       { name: 'Encaixes', value: porStatus['ENCAIXE'], color: COLORS.encaixe },
     ].filter(item => item.value > 0);
 
-    // Converte o mapa de volta para array para os gráficos
     let listaTecnicos = Object.values(mapaPerformance).map(tech => {
       const calcEficiencia = tech.total > 0 ? (tech.finalizado / tech.total) * 100 : 0;
       return {
@@ -204,7 +200,6 @@ export default function Relatorios() {
       };
     });
 
-    // Ordenação
     if (ordenacaoRanking === 'eficiencia') {
       listaTecnicos = listaTecnicos.sort((a, b) => b.eficienciaRaw - a.eficienciaRaw || b.atendimentos - a.atendimentos);
     } else {
@@ -218,17 +213,20 @@ export default function Relatorios() {
       agendamentos: demandaPorDia[key]
     }));
 
+    // Dados Gráfico SÓ Encaixes Dias
     const dataDiasEncaixe = Object.keys(encaixesPorDia).map(key => ({
       dia: diasSemanaNomes[key],
       encaixes: encaixesPorDia[key]
     }));
 
+    // Dados Gráfico Horas (Geral + Linha Encaixe)
     const dataHoras = Object.keys(demandaPorHora).map(key => ({
       hora: `${key}h`,
       agendamentos: demandaPorHora[key],
       encaixes: encaixesPorHora[key] || 0
     })).sort((a,b) => parseInt(a.hora) - parseInt(b.hora));
 
+    // Dados Gráfico SÓ Encaixes Horas (Isolado)
     const dataHorasEncaixe = Object.keys(encaixesPorHora).map(key => ({
       hora: `${key}h`,
       qtd: encaixesPorHora[key]
@@ -246,9 +244,9 @@ export default function Relatorios() {
       dataStatus,
       dataTecnicos: listaTecnicos,
       dataDias,
-      dataDiasEncaixe,
+      dataDiasEncaixe, // Adicionado
       dataHoras,
-      dataHorasEncaixe,
+      dataHorasEncaixe, // Adicionado
       mediaPorHora,
       taxaNoShow,
       taxaConclusao,
@@ -314,6 +312,7 @@ export default function Relatorios() {
               </div>
             </div>
 
+            {/* CARD ENCAIXES - RESTAURADO */}
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
               <div className="p-3 bg-blue-100 rounded-xl text-blue-600"><Zap size={24} /></div>
               <div>
@@ -347,13 +346,15 @@ export default function Relatorios() {
             </div>
           </div>
 
-          {/* SESSÃO RAIO-X ENCAIXES E GRÁFICOS (Mantidos iguais ao seu código visual anterior) */}
+          {/* --- SESSÃO RESTAURADA: RAIO-X DOS ENCAIXES --- */}
           {metrics.totalEncaixes > 0 && (
             <div className="bg-blue-50/50 p-6 rounded-3xl shadow-sm border border-blue-100">
               <h3 className="text-sm font-black uppercase text-blue-600 tracking-widest mb-6 flex items-center gap-2">
                 <Zap size={18}/> Raio-X dos Encaixes
               </h3>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                {/* 1. Dias com mais Encaixes */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-blue-100/50">
                   <p className="text-[10px] font-bold text-slate-400 uppercase mb-4">Volume por Dia</p>
                   <div className="h-48">
@@ -368,6 +369,8 @@ export default function Relatorios() {
                     </ResponsiveContainer>
                   </div>
                 </div>
+
+                {/* 2. Horários de Pico dos Encaixes */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-blue-100/50">
                   <p className="text-[10px] font-bold text-slate-400 uppercase mb-4">Horários Críticos</p>
                   <div className="h-48">
@@ -382,10 +385,12 @@ export default function Relatorios() {
                     </ResponsiveContainer>
                   </div>
                 </div>
+
               </div>
             </div>
           )}
 
+          {/* GRÁFICOS GERAIS */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
               <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6">Distribuição Geral</h3>
@@ -424,6 +429,59 @@ export default function Relatorios() {
                     <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border:'none', boxShadow:'0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
                     <Bar dataKey="atendimentos" name="Total Atendimentos" fill="#7c3aed" radius={[0, 4, 4, 0]} barSize={20} />
                   </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* GRÁFICOS TEMPORAIS (GERAL) */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+              <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6 flex items-center gap-2">
+                <TrendingUp size={14}/> Volume por Dia da Semana (Geral)
+              </h3>
+              <div className="h-60">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={metrics.dataDias}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="dia" tick={{fontSize: 10, fontWeight: 700, fill:'#94a3b8'}} axisLine={false} tickLine={false} />
+                    <YAxis hide />
+                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border:'none'}} />
+                    <Bar dataKey="agendamentos" name="Agendamentos" fill="#94a3b8" radius={[4, 4, 0, 0]} activeBar={{fill: '#7c3aed'}} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+              <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6 flex items-center gap-2">
+                <Clock size={14}/> Horários de Pico (Geral)
+              </h3>
+              <div className="h-60">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={metrics.dataHoras}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="hora" tick={{fontSize: 10, fontWeight: 700, fill:'#94a3b8'}} axisLine={false} tickLine={false} />
+                    <YAxis hide />
+                    <Tooltip contentStyle={{borderRadius: '12px', border:'none'}} />
+                    
+                    <ReferenceLine 
+                      y={metrics.mediaPorHora} 
+                      label={{ 
+                        value: `Média: ${metrics.mediaPorHora}`, 
+                        position: 'insideTopRight', 
+                        fill: '#94a3b8', 
+                        fontSize: 10, 
+                        fontWeight: 700 
+                      }} 
+                      stroke="#94a3b8" 
+                      strokeDasharray="3 3" 
+                    />
+                    
+                    <Line type="monotone" dataKey="agendamentos" name="Total Geral" stroke="#ef4444" strokeWidth={3} dot={{r: 4, fill:'#ef4444'}} />
+                    {/* Linha de Encaixes adicionada */}
+                    <Line type="monotone" dataKey="encaixes" name="Encaixes" stroke="#3b82f6" strokeWidth={2} dot={{r: 3, fill:'#3b82f6'}} strokeDasharray="5 5" />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>
