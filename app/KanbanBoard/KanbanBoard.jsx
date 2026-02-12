@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import CustomCalendar from '../components/CustomCalendar';
 import AddTicketModal from '../components/AddTicketModal';
+import ConfigModal from '../components/ConfigModal'; // <--- IMPORTANTE: Importe o Modal Novo
 
 export default function KanbanBoard() {
   const [tickets, setTickets] = useState([]);
@@ -14,22 +15,39 @@ export default function KanbanBoard() {
   const [filtroAgora, setFiltroAgora] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // --- NOVOS ESTADOS PARA CONFIGURAÇÃO ---
+  const [isConfigOpen, setIsConfigOpen] = useState(false); // Abre/fecha a janelinha
+  const [tecnicosFixos, setTecnicosFixos] = useState([]); // Lista dinâmica de técnicos
+  const [palavrasIgnoradas, setPalavrasIgnoradas] = useState([]); // Lista dinâmica de filtros
+  // --------------------------------------
+
   const [somAtivo, setSomAtivo] = useState(true);
 
   const ticketsAnterioresRef = useRef([]);
   const isFirstLoad = useRef(true);
 
-  const tecnicosFixos = [
-    'mickael.maciel@cardapioweb.com',
-    'samara.patricio@cardapioweb.com',
-    'thalysson.lucas@cardapioweb.com',
-    'carlos.isaac@cardapioweb.com',
-    'gustavo.ribeiro@cardapioweb.com',
-    'nicolas.alves@cardapioweb.com'
-  ];
-
   const [tecnicosSelecionados, setTecnicosSelecionados] = useState([]);
   const [filtroSemTecnico, setFiltroSemTecnico] = useState(false);
+
+  // --- BUSCAR CONFIGURAÇÕES NO INÍCIO ---
+  useEffect(() => {
+    fetch('/api/config')
+      .then(res => res.json())
+      .then(data => {
+        if (data.tecnicos) setTecnicosFixos(data.tecnicos);
+        if (data.filtros) setPalavrasIgnoradas(data.filtros);
+      })
+      .catch(err => console.error("Erro ao carregar configs:", err));
+  }, []);
+
+  // Atualiza a tela quando você salva o modal
+  const handleUpdateConfig = (newConfig) => {
+    setTecnicosFixos(newConfig.tecnicos);
+    setPalavrasIgnoradas(newConfig.filtros);
+    // Força recarregar os dados para aplicar o filtro novo imediatamente
+    load(false, newConfig.filtros); 
+  };
 
   const formatarNome = (email) => {
     const nomeBase = email.split('@')[0];
@@ -52,25 +70,40 @@ export default function KanbanBoard() {
 
   const playNotification = () => {
     if (!somAtivo) return;
-    // SOM ALTERADO AQUI PARA O NOVO (2870)
-    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2870/2870-preview.mp3');
+    // SOM ALTERADO PARA O SOLICITADO
+    // Certifique-se de que o arquivo está em public/sounds/ ou ajuste o caminho
+    const audio = new Audio('/sounds/mixkit-software-interface-back-2575.wav'); 
     audio.play().catch(e => console.log("Áudio bloqueado pelo navegador."));
   };
 
-  const load = useCallback(async (isSilent = false) => {
+  const load = useCallback(async (isSilent = false, filtrosAtuais = null) => {
     if (!isSilent) setLoading(true);
+    
+    // Usa os filtros passados agora ou o que já está no estado
+    const listaNegra = filtrosAtuais || palavrasIgnoradas;
+
     try {
       const query = dates.start && dates.end ? `start=${dates.start}&end=${dates.end}` : `view=${view}`;
       const res = await fetch(`/api/calendar?${query}`);
       const data = await res.json();
 
       if (!data.error) {
-        const dataFiltrada = data.filter(t =>
-          !t.summary.toLowerCase().includes('ocupado') &&
-          !t.summary.includes('🟣') &&
-          !t.summary.includes('[SUP]') &&
-          !t.summary.toLowerCase().includes('sem ativação')
-        );
+        // --- FILTRO DINÂMICO USANDO VERCEL KV ---
+        const dataFiltrada = data.filter(t => {
+          const resumo = t.summary.toLowerCase();
+          
+          // Se a lista ainda não carregou (primeiro segundo), usa um fallback seguro
+          if (listaNegra.length === 0) {
+             return !resumo.includes('ocupado') && !resumo.includes('sem ativação');
+          }
+
+          // Verifica se TEM alguma palavra proibida na lista
+          const temPalavraProibida = listaNegra.some(palavra => resumo.includes(palavra.toLowerCase()));
+          
+          // Se tiver palavra proibida, remove (return false). Se não tiver, mantém (return true).
+          return !temPalavraProibida;
+        });
+        // ----------------------------------------
 
         if (isSilent && !isFirstLoad.current) {
           const novosPedidos = dataFiltrada.filter(t => {
@@ -84,12 +117,7 @@ export default function KanbanBoard() {
           }
         }
 
-        if (!isSilent) {
-          ticketsAnterioresRef.current = dataFiltrada;
-        } else {
-          ticketsAnterioresRef.current = dataFiltrada;
-        }
-
+        ticketsAnterioresRef.current = dataFiltrada;
         setTickets(dataFiltrada);
         setLastUpdate(new Date());
 
@@ -99,13 +127,16 @@ export default function KanbanBoard() {
       console.error("Erro ao atualizar:", error);
     }
     setLoading(false);
-  }, [view, dates, somAtivo]);
+  }, [view, dates, somAtivo, palavrasIgnoradas]); // Adicionado dependência de palavrasIgnoradas
 
   useEffect(() => {
-    load();
-    const interval = setInterval(() => load(true), 10000);
-    return () => clearInterval(interval);
-  }, [load]);
+    // Só começa o loop se já tivermos carregado as configurações (para não piscar dados errados)
+    if (palavrasIgnoradas.length > 0 || tecnicosFixos.length > 0) {
+        load();
+        const interval = setInterval(() => load(true), 10000);
+        return () => clearInterval(interval);
+    }
+  }, [load, palavrasIgnoradas, tecnicosFixos]);
 
   const handleCreateTicket = async (newTicketData) => {
     try {
@@ -130,17 +161,12 @@ export default function KanbanBoard() {
     setExpandedCards(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  // --- FUNÇÃO CORRIGIDA PARA LIMPAR HTML ---
   const renderDescription = (text) => {
     if (!text) return '';
-
-    // 1. Remove tags HTML básicas que o Google Agenda pode enviar (<br>, <b>, etc)
-    // Mantém apenas o texto puro e os links
     let cleanText = text
-      .replace(/<br\s*\/?>/gi, '\n') // Troca <br> por quebra de linha
-      .replace(/<[^>]+>/g, '');      // Remove qualquer outra tag HTML (<a>, <div>, etc)
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '');      
 
-    // 2. Detecta URLs no texto limpo e transforma em links clicáveis
     const urlRegex = /(https?:\/\/[^\s]+)/g;
 
     return cleanText.split(urlRegex).map((part, i) =>
@@ -253,6 +279,13 @@ export default function KanbanBoard() {
         tecnicos={tecnicosFixos}
       />
 
+      {/* MODAL DE CONFIGURAÇÃO (ENGRENAGEM) */}
+      <ConfigModal 
+        isOpen={isConfigOpen} 
+        onClose={() => setIsConfigOpen(false)} 
+        onSave={handleUpdateConfig} 
+      />
+
       <header className="mb-6 flex flex-col gap-6 bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
         <div className="flex flex-col xl:flex-row justify-between items-start gap-4">
 
@@ -263,6 +296,17 @@ export default function KanbanBoard() {
               <button onClick={toggleSom} className={`ml-2 p-2 rounded-full transition-all ${somAtivo ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>
                 {somAtivo ? '🔊' : '🔇'}
               </button>
+              
+              {/* --- BOTÃO DE CONFIGURAÇÃO (NOVO) --- */}
+              <button 
+                onClick={() => setIsConfigOpen(true)} 
+                className="ml-2 p-2 rounded-full bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-all" 
+                title="Configurações Globais"
+              >
+                ⚙️
+              </button>
+              {/* ---------------------------------- */}
+
             </div>
             <div className="flex flex-col gap-1 mt-1">
               <p className="text-[11px] font-900 text-slate-700 uppercase tracking-tight">
@@ -331,11 +375,13 @@ export default function KanbanBoard() {
           </div>
 
           <div className="flex flex-wrap gap-2">
+            {/* AGORA A LISTA VEM DA API (ESTADO) E NÃO MAIS FIXA */}
             {tecnicosFixos.map(email => (
               <button key={email} onClick={() => toggleTecnico(email)} className={`px-3 py-1.5 rounded-full text-[10px] font-900 border-2 transition-all active:scale-95 ${tecnicosSelecionados.includes(email) ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-900 border-slate-200 hover:border-blue-500 hover:bg-blue-50'}`}>
                 {formatarNome(email)} ({contarPorTecnicoDinamico(email)})
               </button>
             ))}
+            {tecnicosFixos.length === 0 && <span className="text-[10px] text-slate-400 animate-pulse">Carregando equipe...</span>}
           </div>
         </div>
       </header>

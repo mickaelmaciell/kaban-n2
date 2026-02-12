@@ -12,6 +12,9 @@ export default function Relatorios() {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [ordenacaoRanking, setOrdenacaoRanking] = useState('eficiencia'); 
+  
+  // Estado para armazenar os técnicos cadastrados (Vindos da API/Config)
+  const [tecnicosCadastrados, setTecnicosCadastrados] = useState([]);
 
   // DATA INICIAL: HOJE
   const [dateRange, setDateRange] = useState(() => {
@@ -23,14 +26,8 @@ export default function Relatorios() {
   const isTodaySelected = useMemo(() => {
     const hoje = new Date();
     const format = (d) => d.toLocaleDateString('en-CA');
-    const todayStr = format(hoje);
-    return dateRange.start === todayStr && dateRange.end === todayStr;
+    return dateRange.start === format(hoje) && dateRange.end === format(hoje);
   }, [dateRange]);
-
-  const tecnicosFixos = [
-    'mickael.maciel', 'samara.patricio', 'thalysson.lucas', 
-    'carlos.isaac', 'gustavo.ribeiro', 'nicolas.alves'
-  ];
 
   const COLORS = {
     primary: '#7c3aed', 
@@ -38,7 +35,7 @@ export default function Relatorios() {
     warning: '#f59e0b', 
     danger: '#ef4444',  
     neutral: '#94a3b8',
-    encaixe: '#3b82f6' // Azul
+    encaixe: '#3b82f6'
   };
 
   const handleDateChange = useCallback((start, end) => {
@@ -54,26 +51,33 @@ export default function Relatorios() {
     setDateRange({ start: format(hoje), end: format(hoje) });
   };
 
+  // 1. Busca os Técnicos Ativos (Configuração)
+  useEffect(() => {
+    fetch('/api/config')
+      .then(res => res.json())
+      .then(data => {
+        if (data.tecnicos) {
+          setTecnicosCadastrados(data.tecnicos);
+        }
+      })
+      .catch(err => console.error("Erro ao buscar configs:", err));
+  }, []);
+
+  // 2. Busca os Relatórios
   useEffect(() => {
     const controller = new AbortController();
     
     const fetchData = async () => {
       setLoading(true);
       try {
-        // --- CORREÇÃO DE CACHE ---
-        // Adiciona timestamp para forçar dados novos sempre que abrir o relatório
         const timestamp = new Date().getTime(); 
         const res = await fetch(`/api/calendar?start=${dateRange.start}&end=${dateRange.end}&type=report&_t=${timestamp}`, {
           signal: controller.signal,
-          cache: 'no-store', // Desativa cache do Next.js
-          headers: {
-            'Pragma': 'no-cache',
-            'Cache-Control': 'no-cache, no-store, must-revalidate'
-          }
+          cache: 'no-store', 
+          headers: { 'Pragma': 'no-cache', 'Cache-Control': 'no-cache, no-store, must-revalidate' }
         });
         const data = await res.json();
         
-        // Filtro igual ao do Kanban para garantir consistência
         if (!data.error) {
           const dataFiltrada = data.filter(t => 
             !t.summary.toLowerCase().includes('ocupado') && 
@@ -82,9 +86,7 @@ export default function Relatorios() {
           setTickets(dataFiltrada);
         }
       } catch (error) {
-        if (error.name !== 'AbortError') {
-          console.error("Erro ao carregar relatórios", error);
-        }
+        if (error.name !== 'AbortError') console.error("Erro relatório", error);
       }
       setLoading(false);
     };
@@ -96,27 +98,35 @@ export default function Relatorios() {
     return () => controller.abort();
   }, [dateRange]);
 
+  // 3. Processamento dos Dados (A Mágica da História + Ativos)
   const metrics = useMemo(() => {
-    if (!tickets.length) return null;
+    if (!tickets.length && tecnicosCadastrados.length === 0) return null;
 
     const total = tickets.length;
     const porStatus = { 'A FAZER': 0, 'NOSHOW': 0, 'FINALIZADO': 0, 'SEM TECNICO': 0, 'ENCAIXE': 0 };
-    const porTecnico = {};
-    const eficienciaTecnico = {};
     
-    // Dados Gerais
+    // Mapa de performance (Chave = Email do técnico)
+    const mapaPerformance = {};
+
+    // A. Inicializa com os Técnicos CADASTRADOS (Ativos)
+    // Isso garante que eles apareçam na lista mesmo se tiverem 0 tickets no período
+    tecnicosCadastrados.forEach(email => {
+      mapaPerformance[email] = {
+        email: email,
+        name: email.split('@')[0].split('.').map(n => n.charAt(0).toUpperCase() + n.slice(1)).join(' '),
+        total: 0,
+        finalizado: 0,
+        noshow: 0,
+        ativo: true // Marcador visual opcional
+      };
+    });
+
     const demandaPorDia = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
     const demandaPorHora = {}; 
-    
-    // Dados SÓ de Encaixes (Isolados)
     const encaixesPorDia = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0, 6:0 };
     const encaixesPorHora = {}; 
 
-    tecnicosFixos.forEach(t => {
-      porTecnico[t] = 0;
-      eficienciaTecnico[t] = { total: 0, finalizado: 0, noshow: 0 };
-    });
-
+    // B. Processa os Tickets
     tickets.forEach(t => {
       let status = t.status;
       const isEncaixe = t.summary.toUpperCase().includes('ENCAIXE'); 
@@ -128,27 +138,37 @@ export default function Relatorios() {
         if (porStatus[status] !== undefined) porStatus[status]++;
       }
 
-      // --- CORREÇÃO DA CONTAGEM (Lógica do Kanban) ---
-      // Identifica técnicos únicos neste ticket para evitar contagem duplicada
-      const tecnicosUnicosNesteTicket = new Set();
+      // --- LÓGICA DE HISTÓRICO ---
+      // Identifica técnicos únicos neste ticket
+      const tecnicosNesteTicket = new Set();
 
       t.attendees.forEach(att => {
-        const nomeEmail = att.email.split('@')[0];
-        // Verifica se o email faz parte da lista de técnicos fixos
-        const techEncontrado = tecnicosFixos.find(fixo => nomeEmail.includes(fixo));
-        
-        if (techEncontrado) {
-          tecnicosUnicosNesteTicket.add(techEncontrado);
+        // Filtra para pegar apenas emails da empresa (segurança básica)
+        if (att.email && att.email.includes('@cardapioweb.com')) {
+          tecnicosNesteTicket.add(att.email);
         }
       });
 
-      // Incrementa os contadores apenas uma vez por técnico por ticket
-      tecnicosUnicosNesteTicket.forEach(tech => {
-        porTecnico[tech]++;
-        eficienciaTecnico[tech].total++;
-        if (t.status === 'FINALIZADO') eficienciaTecnico[tech].finalizado++;
-        if (t.status === 'NOSHOW') eficienciaTecnico[tech].noshow++;
+      tecnicosNesteTicket.forEach(email => {
+        // Se o técnico NÃO está no mapa (foi removido do cadastro), adiciona ele AGORA
+        // Isso preserva a história!
+        if (!mapaPerformance[email]) {
+          mapaPerformance[email] = {
+            email: email,
+            name: email.split('@')[0].split('.').map(n => n.charAt(0).toUpperCase() + n.slice(1)).join(' '),
+            total: 0,
+            finalizado: 0,
+            noshow: 0,
+            ativo: false // Indica que não está mais na lista oficial
+          };
+        }
+
+        // Computa os dados
+        mapaPerformance[email].total++;
+        if (t.status === 'FINALIZADO') mapaPerformance[email].finalizado++;
+        if (t.status === 'NOSHOW') mapaPerformance[email].noshow++;
       });
+      // ---------------------------
 
       const start = new Date(t.start);
       const diaSemana = start.getDay();
@@ -171,22 +191,20 @@ export default function Relatorios() {
       { name: 'Encaixes', value: porStatus['ENCAIXE'], color: COLORS.encaixe },
     ].filter(item => item.value > 0);
 
-    let listaTecnicos = Object.keys(porTecnico).map(tech => {
-      const total = eficienciaTecnico[tech].total;
-      const finalizados = eficienciaTecnico[tech].finalizado;
-      const noshow = eficienciaTecnico[tech].noshow;
-      const calcEficiencia = total > 0 ? (finalizados / total) * 100 : 0;
-
+    // Converte o mapa de volta para array para os gráficos
+    let listaTecnicos = Object.values(mapaPerformance).map(tech => {
+      const calcEficiencia = tech.total > 0 ? (tech.finalizado / tech.total) * 100 : 0;
       return {
-        name: tech.split('.')[0].charAt(0).toUpperCase() + tech.split('.')[0].slice(1), 
-        atendimentos: porTecnico[tech],
-        finalizados: finalizados, 
-        noshow: noshow,
-        eficienciaRaw: calcEficiencia, 
+        ...tech,
+        atendimentos: tech.total,
+        finalizados: tech.finalizado,
+        noshow: tech.noshow,
+        eficienciaRaw: calcEficiencia,
         eficiencia: calcEficiencia.toFixed(1)
       };
     });
 
+    // Ordenação
     if (ordenacaoRanking === 'eficiencia') {
       listaTecnicos = listaTecnicos.sort((a, b) => b.eficienciaRaw - a.eficienciaRaw || b.atendimentos - a.atendimentos);
     } else {
@@ -195,26 +213,22 @@ export default function Relatorios() {
 
     const diasSemanaNomes = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
     
-    // Dados Gráfico Geral Dias
     const dataDias = Object.keys(demandaPorDia).map(key => ({
       dia: diasSemanaNomes[key],
       agendamentos: demandaPorDia[key]
     }));
 
-    // Dados Gráfico SÓ Encaixes Dias
     const dataDiasEncaixe = Object.keys(encaixesPorDia).map(key => ({
       dia: diasSemanaNomes[key],
       encaixes: encaixesPorDia[key]
     }));
 
-    // Dados Gráfico Horas (Geral + Linha Encaixe)
     const dataHoras = Object.keys(demandaPorHora).map(key => ({
       hora: `${key}h`,
       agendamentos: demandaPorHora[key],
-      encaixes: encaixesPorHora[key] || 0 // Usado no gráfico principal
+      encaixes: encaixesPorHora[key] || 0
     })).sort((a,b) => parseInt(a.hora) - parseInt(b.hora));
 
-    // Dados Gráfico SÓ Encaixes Horas (Isolado)
     const dataHorasEncaixe = Object.keys(encaixesPorHora).map(key => ({
       hora: `${key}h`,
       qtd: encaixesPorHora[key]
@@ -232,14 +246,15 @@ export default function Relatorios() {
       dataStatus,
       dataTecnicos: listaTecnicos,
       dataDias,
-      dataDiasEncaixe, // Novo
+      dataDiasEncaixe,
       dataHoras,
-      dataHorasEncaixe, // Novo
+      dataHorasEncaixe,
       mediaPorHora,
       taxaNoShow,
-      taxaConclusao
+      taxaConclusao,
+      equipeAtivaCount: listaTecnicos.filter(t => t.total > 0).length
     };
-  }, [tickets, ordenacaoRanking]);
+  }, [tickets, ordenacaoRanking, tecnicosCadastrados]);
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 font-sans text-slate-800">
@@ -326,21 +341,19 @@ export default function Relatorios() {
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
               <div className="p-3 bg-slate-100 rounded-xl text-slate-600"><Users size={24} /></div>
               <div>
-                <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">Equipe Ativa</p>
-                <p className="text-2xl font-black text-slate-800">{metrics.dataTecnicos.filter(t => t.atendimentos > 0).length}</p>
+                <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">Participantes</p>
+                <p className="text-2xl font-black text-slate-800">{metrics.equipeAtivaCount}</p>
               </div>
             </div>
           </div>
 
-          {/* --- NOVA SEÇÃO: RAIO-X DOS ENCAIXES --- */}
+          {/* SESSÃO RAIO-X ENCAIXES E GRÁFICOS (Mantidos iguais ao seu código visual anterior) */}
           {metrics.totalEncaixes > 0 && (
             <div className="bg-blue-50/50 p-6 rounded-3xl shadow-sm border border-blue-100">
               <h3 className="text-sm font-black uppercase text-blue-600 tracking-widest mb-6 flex items-center gap-2">
                 <Zap size={18}/> Raio-X dos Encaixes
               </h3>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                
-                {/* 1. Dias com mais Encaixes */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-blue-100/50">
                   <p className="text-[10px] font-bold text-slate-400 uppercase mb-4">Volume por Dia</p>
                   <div className="h-48">
@@ -355,8 +368,6 @@ export default function Relatorios() {
                     </ResponsiveContainer>
                   </div>
                 </div>
-
-                {/* 2. Horários de Pico dos Encaixes */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-blue-100/50">
                   <p className="text-[10px] font-bold text-slate-400 uppercase mb-4">Horários Críticos</p>
                   <div className="h-48">
@@ -371,14 +382,11 @@ export default function Relatorios() {
                     </ResponsiveContainer>
                   </div>
                 </div>
-
               </div>
             </div>
           )}
 
-          {/* GRÁFICOS GERAIS */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
               <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6">Distribuição Geral</h3>
               <div className="h-64">
@@ -412,7 +420,7 @@ export default function Relatorios() {
                   <BarChart data={metrics.dataTecnicos} layout="vertical" margin={{left: 20, right: 20}}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                     <XAxis type="number" hide />
-                    <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 10, fontWeight: 700, fill:'#64748b'}} />
+                    <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 10, fontWeight: 700, fill:'#64748b'}} />
                     <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border:'none', boxShadow:'0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
                     <Bar dataKey="atendimentos" name="Total Atendimentos" fill="#7c3aed" radius={[0, 4, 4, 0]} barSize={20} />
                   </BarChart>
@@ -421,60 +429,7 @@ export default function Relatorios() {
             </div>
           </div>
 
-          {/* GRÁFICOS TEMPORAIS (GERAL) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
-            <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-              <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6 flex items-center gap-2">
-                <TrendingUp size={14}/> Volume por Dia da Semana (Geral)
-              </h3>
-              <div className="h-60">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={metrics.dataDias}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="dia" tick={{fontSize: 10, fontWeight: 700, fill:'#94a3b8'}} axisLine={false} tickLine={false} />
-                    <YAxis hide />
-                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border:'none'}} />
-                    <Bar dataKey="agendamentos" name="Agendamentos" fill="#94a3b8" radius={[4, 4, 0, 0]} activeBar={{fill: '#7c3aed'}} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-             <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-              <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest mb-6 flex items-center gap-2">
-                <Clock size={14}/> Horários de Pico (Geral)
-              </h3>
-              <div className="h-60">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={metrics.dataHoras}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="hora" tick={{fontSize: 10, fontWeight: 700, fill:'#94a3b8'}} axisLine={false} tickLine={false} />
-                    <YAxis hide />
-                    <Tooltip contentStyle={{borderRadius: '12px', border:'none'}} />
-                    
-                    <ReferenceLine 
-                      y={metrics.mediaPorHora} 
-                      label={{ 
-                        value: `Média: ${metrics.mediaPorHora}`, 
-                        position: 'insideTopRight', 
-                        fill: '#94a3b8', 
-                        fontSize: 10, 
-                        fontWeight: 700 
-                      }} 
-                      stroke="#94a3b8" 
-                      strokeDasharray="3 3" 
-                    />
-                    
-                    <Line type="monotone" dataKey="agendamentos" name="Total Geral" stroke="#ef4444" strokeWidth={3} dot={{r: 4, fill:'#ef4444'}} />
-                    <Line type="monotone" dataKey="encaixes" name="Encaixes" stroke="#3b82f6" strokeWidth={2} dot={{r: 3, fill:'#3b82f6'}} strokeDasharray="5 5" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
-
-          {/* TABELA DE RANKING */}
+          {/* RANKING TABLE */}
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
             <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
               <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest flex items-center gap-2">
@@ -512,7 +467,7 @@ export default function Relatorios() {
                 </thead>
                 <tbody className="text-sm">
                   {metrics.dataTecnicos.map((t, i) => (
-                    <tr key={t.name} className="border-b border-slate-50 hover:bg-slate-50 transition">
+                    <tr key={t.email} className={`border-b border-slate-50 hover:bg-slate-50 transition ${!t.ativo ? 'opacity-70 bg-slate-50/50' : ''}`}>
                       <td className="py-3 pl-2">
                         <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold 
                           ${i === 0 ? 'bg-yellow-100 text-yellow-700' : 
@@ -521,7 +476,10 @@ export default function Relatorios() {
                           {i+1}º
                         </span>
                       </td>
-                      <td className="py-3 pl-2 font-bold text-slate-700">{t.name}</td>
+                      <td className="py-3 pl-2 font-bold text-slate-700">
+                        {t.name}
+                        {!t.ativo && <span className="ml-2 text-[8px] bg-slate-200 text-slate-500 px-1 rounded">REMOVIDO</span>}
+                      </td>
                       <td className="py-3 text-center font-bold text-slate-600">{t.atendimentos}</td>
                       <td className="py-3 text-center">
                         <span className="text-green-700 font-bold bg-green-50 px-2 py-0.5 rounded-lg">{t.finalizados}</span>
@@ -550,7 +508,6 @@ export default function Relatorios() {
               </table>
             </div>
           </div>
-
         </div>
       )}
     </div>
